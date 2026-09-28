@@ -96,7 +96,15 @@ Bu katman özellikle `teslimat tarihi`, `servis kaydı`, `koltuk kumaşı`, `mek
 
 ## Otomatik testler
 
-GitHub Actions üzerinde otomatik test paketi çalışır. Test kapsamı şunları içerir:
+GitHub Actions üzerinde Linux ve Windows testleri çalışır. Güncel durumda:
+
+- Linux test paketi: **37 test başarılı**.
+- Toplam kod kapsamı: **%89,78**.
+- CI minimum coverage eşiği: **%85**.
+- Gerçek `install_windows.bat` dosyası GitHub'ın Windows runner'ında başarıyla çalıştırılmıştır.
+- Windows ortamında masaüstü, parser, SQLite, dışa aktarma ve zamanlama smoke testleri başarıyla geçmektedir.
+
+Test kapsamı şunları içerir:
 
 - Türkçe ve ISO tarih ayrıştırma,
 - yanıt/çözüm sürelerinin hesaplanması ve negatif sürelerin reddedilmesi,
@@ -111,8 +119,6 @@ GitHub Actions üzerinde otomatik test paketi çalışır. Test kapsamı şunlar
 - örnek Şikayetvar HTML'i üzerinden liste/detay parser davranışı,
 - masaüstü arayüzünün headless ortamda açılması ve analiz tablolarını doldurması,
 - masaüstü arayüzünün scraper komutunu doğru kurması ve Başlat/Durdur akışı.
-
-CI, toplam test kapsamı %85'in altına düştüğünde başarısız olur.
 
 ## Komut satırı kullanımı
 
