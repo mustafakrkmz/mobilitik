@@ -11,9 +11,11 @@ def test_parse_datetime_supports_turkish_embedded_text():
     assert parsed == dt.datetime(2026, 1, 2, 3, 30)
 
 
-def test_parse_datetime_supports_iso_and_numeric_dates():
+def test_parse_datetime_supports_iso_numeric_and_timezone_dates():
     assert parse_datetime("2026-09-28T14:30:00") == dt.datetime(2026, 9, 28, 14, 30)
     assert parse_datetime("28.09.2026 14:30") == dt.datetime(2026, 9, 28, 14, 30)
+    # 11:30 UTC is 14:30 in Türkiye (UTC+3).
+    assert parse_datetime("2026-09-28T11:30:00Z") == dt.datetime(2026, 9, 28, 14, 30)
 
 
 def test_first_datetime_skips_non_dates():
