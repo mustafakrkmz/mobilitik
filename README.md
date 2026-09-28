@@ -30,15 +30,16 @@ Arayüz üzerinden:
 - taranacak maksimum sayfa sayısı belirlenebilir,
 - veri toplama başlatılıp durdurulabilir,
 - toplanan kayıtlar yerel tabloda görüntülenebilir,
-- toplam şikâyet, çözülme oranı ve firma yanıt oranı görülebilir,
+- seçili firma ve dönem için toplam şikâyet, çözülme oranı ve firma yanıt oranı görülebilir,
 - kategori analizi yapılabilir,
 - tek kelime, bigram ve trigram sıklıkları incelenebilir,
 - TF-IDF ağırlıkları ve belge sıklıkları görüntülenebilir,
+- her şikâyet kategorisini diğerlerinden ayıran kelime/n-gram ifadeleri incelenebilir,
 - veriler CSV veya Excel olarak dışa aktarılabilir.
 
 ## Kategori analizi
 
-İlk sınıflandırma motoru ağırlıklı anahtar kelime/ifade eşleşmesine dayanır. Bir şikâyet birden fazla kategoriye atanabilir.
+İlk sınıflandırma motoru ağırlıklı anahtar kelime/ifade eşleşmesine dayanır. Eşleşmeler kelime/ifade sınırlarıyla yapılır; kısa anahtar kelimelerin başka kelimelerin içinde yanlış pozitif üretmesi engellenir. Bir şikâyet birden fazla kategoriye atanabilir.
 
 Başlangıç kategorileri:
 
@@ -63,6 +64,31 @@ Seçili firma ve tarih aralığı için şikâyet başlığı ile tam metin birl
 - TF-IDF ağırlığı ile yalnızca sık değil, daha ayırt edici ifadeler de öne çıkarılır.
 
 Bu katman özellikle `teslimat tarihi`, `servis kaydı`, `koltuk kumaşı`, `mekanizma arızası` gibi tekrarlayan sorun kalıplarını keşfetmek ve kategori sözlüğünü veriyle geliştirmek için kullanılacaktır.
+
+## Kategoriye özgü ifadeler
+
+`Kategori İfadeleri` sekmesi, her kategorideki şikâyetleri diğer kategorilerle karşılaştırır ve o kategori için görece daha ayırt edici olan unigram, bigram veya trigramları sıralar. Böylece önceden tanımlanmamış fakat gerçek veride sık tekrar eden sorun kalıpları kategori sözlüğüne kontrollü biçimde eklenebilir.
+
+Örneğin teslimat şikâyetlerinde `teslimat tarihi`, üretim/kalite şikâyetlerinde `koltuk kumaşı` veya aksesuar şikâyetlerinde `çekmece rayı` gibi ifadeler veri içinden keşfedilebilir.
+
+## Otomatik testler
+
+GitHub Actions üzerinde otomatik test paketi çalışır. Test kapsamı şunları içerir:
+
+- Türkçe tarih ayrıştırma,
+- kategori sınıflandırma ve çoklu kategori davranışı,
+- yanlış alt-kelime eşleşmelerinin engellenmesi,
+- kategori özetleri ve çözülme/yanıt oranları,
+- unigram/bigram/trigram, belge sıklığı ve TF-IDF,
+- kategoriye özgü ayırt edici ifade analizi,
+- SQLite pipeline insert/update davranışı,
+- veritabanı firma/tarih filtreleri,
+- CSV ve Excel dışa aktarma,
+- örnek Şikayetvar HTML'i üzerinden liste/detay parser davranışı,
+- masaüstü arayüzünün headless ortamda açılması ve analiz tablolarını doldurması,
+- masaüstü arayüzünün scraper komutunu doğru kurması ve Başlat/Durdur akışı.
+
+CI, toplam test kapsamı %85'in altına düştüğünde başarısız olur.
 
 ## Komut satırı kullanımı
 
@@ -109,14 +135,14 @@ Veriler varsayılan olarak `mobilitik.db` dosyasındaki `complaints` tablosuna y
 - Çözülme durumu liste kartındaki işaretten alınmaktadır.
 - Firma yanıtının ve özellikle yanıt/çözüm tarihinin seçicileri ayrıca doğrulanmaya devam etmektedir.
 - Tarihte yıl görünmediğinde mevcut yıl körlemesine atanmaz; yıl geçişlerinde geçmiş tarih olasılığı dikkate alınır.
-- Masaüstü arayüz geliştirme sürümüdür; Windows paketleme aşamasından önce gerçek makinede uçtan uca test yapılacaktır.
+- Otomatik testler uygulama mantığını ve örnek HTML parser davranışını doğrular; harici sitenin gelecekteki DOM değişikliklerini garanti edemez.
+- Windows paketleme aşamasından önce gerçek Windows makinede son uçtan uca test yapılacaktır.
 
 ## Yol haritası
 
 1. Firma yanıt tarihi ve çözüm tarihini güvenilir biçimde çıkarma
 2. Yanıt ve çözüm süresi metrikleri
 3. Kategori sözlüğünü gerçek mobilya şikâyetleriyle kalibre etme
-4. Kategoriye özgü ayırt edici kelime/n-gram analizi
-5. Firma karşılaştırmalı grafikler ve zaman serileri
-6. Analiz sonuçlarını Excel/rapor olarak dışa aktarma
-7. Windows için tek dosyalı/kurulumlu dağıtım hazırlama
+4. Firma karşılaştırmalı grafikler ve zaman serileri
+5. Analiz sonuçlarını filtreli Excel/rapor olarak dışa aktarma
+6. Windows için tek dosyalı/kurulumlu dağıtım hazırlama
