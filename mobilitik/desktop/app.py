@@ -29,8 +29,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mobilitik.analysis.category_terms import category_distinctive_terms
 from mobilitik.analysis.summary import category_summary
 from mobilitik.analysis.textstats import TextAnalyzer
+from mobilitik.desktop.commands import build_scrapy_args
 from mobilitik.desktop.data import ComplaintRepository
 
 
@@ -42,9 +44,10 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_TITLE} — Mobilya Şikâyet Analizi")
-        self.resize(1280, 900)
+        self.resize(1280, 920)
         self.repo = ComplaintRepository(DB_PATH)
         self.process: QProcess | None = None
+        self._distinctive_cache: dict[str, list] = {}
         self._build_ui()
         self.refresh_data()
         self.refresh_timer = QTimer(self)
@@ -60,7 +63,9 @@ class MainWindow(QMainWindow):
 
         header = QLabel("Mobilitik")
         header.setStyleSheet("font-size: 28px; font-weight: 700;")
-        subtitle = QLabel("Mobilya sektöründeki tüketici şikâyetlerini topla, sınıflandır ve çözüm performansını incele.")
+        subtitle = QLabel(
+            "Mobilya sektöründeki tüketici şikâyetlerini topla, sınıflandır ve çözüm performansını incele."
+        )
         subtitle.setStyleSheet("color: #666;")
         layout.addWidget(header)
         layout.addWidget(subtitle)
@@ -106,7 +111,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(controls)
 
         cards = QHBoxLayout()
-        self.total_card = self._metric_card("Toplam Şikâyet", "0")
+        self.total_card = self._metric_card("Seçili Dönem Şikâyet", "0")
         self.resolved_card = self._metric_card("Çözüldü", "—")
         self.response_card = self._metric_card("Firma Yanıtı", "—")
         cards.addWidget(self.total_card[0])
@@ -149,12 +154,16 @@ class MainWindow(QMainWindow):
 
         self.analysis_tab = QWidget()
         analysis_layout = QVBoxLayout(self.analysis_tab)
-        analysis_info = QLabel("Bir şikâyet birden fazla kategoriye girebilir. Yüzdeler kategori içindeki çözülme ve firma yanıt oranlarını gösterir.")
+        analysis_info = QLabel(
+            "Bir şikâyet birden fazla kategoriye girebilir. Yüzdeler kategori içindeki çözülme ve firma yanıt oranlarını gösterir."
+        )
         analysis_info.setWordWrap(True)
         analysis_info.setStyleSheet("color: #666;")
         analysis_layout.addWidget(analysis_info)
         self.category_table = QTableWidget(0, 5)
-        self.category_table.setHorizontalHeaderLabels(["Kategori", "Şikâyet", "Çözülen", "Çözülme %", "Firma Yanıt %"])
+        self.category_table.setHorizontalHeaderLabels(
+            ["Kategori", "Şikâyet", "Çözülen", "Çözülme %", "Firma Yanıt %"]
+        )
         self.category_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.category_table.setAlternatingRowColors(True)
         category_header = self.category_table.horizontalHeader()
@@ -166,7 +175,9 @@ class MainWindow(QMainWindow):
 
         self.word_tab = QWidget()
         word_layout = QVBoxLayout(self.word_tab)
-        word_info = QLabel("Seçili firma ve tarih aralığındaki şikâyet metinlerinden en sık kelime ve kelime grupları ile TF-IDF ağırlıklı ifadeler hesaplanır.")
+        word_info = QLabel(
+            "Seçili firma ve tarih aralığındaki şikâyet metinlerinden en sık kelime ve kelime grupları ile TF-IDF ağırlıklı ifadeler hesaplanır."
+        )
         word_info.setWordWrap(True)
         word_info.setStyleSheet("color: #666;")
         word_layout.addWidget(word_info)
@@ -190,6 +201,40 @@ class MainWindow(QMainWindow):
             word_header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         word_layout.addWidget(self.word_table)
         tabs.addTab(self.word_tab, "Kelime Analizi")
+
+        self.distinctive_tab = QWidget()
+        distinctive_layout = QVBoxLayout(self.distinctive_tab)
+        distinctive_info = QLabel(
+            "Her kategoriyi diğer kategorilerden ayıran ifadeler gösterilir. Bu ekran kategori sözlüğünü gerçek veriye göre geliştirmek için kullanılır."
+        )
+        distinctive_info.setWordWrap(True)
+        distinctive_info.setStyleSheet("color: #666;")
+        distinctive_layout.addWidget(distinctive_info)
+        distinctive_controls = QHBoxLayout()
+        self.distinctive_category_combo = QComboBox()
+        self.distinctive_category_combo.currentIndexChanged.connect(self._render_distinctive_category)
+        self.distinctive_ngram_combo = QComboBox()
+        self.distinctive_ngram_combo.addItem("Tek kelime", 1)
+        self.distinctive_ngram_combo.addItem("İki kelime", 2)
+        self.distinctive_ngram_combo.addItem("Üç kelime", 3)
+        self.distinctive_ngram_combo.setCurrentIndex(1)
+        self.distinctive_ngram_combo.currentIndexChanged.connect(self.refresh_distinctive_analysis)
+        distinctive_controls.addWidget(QLabel("Kategori"))
+        distinctive_controls.addWidget(self.distinctive_category_combo)
+        distinctive_controls.addWidget(QLabel("İfade uzunluğu"))
+        distinctive_controls.addWidget(self.distinctive_ngram_combo)
+        distinctive_controls.addStretch()
+        distinctive_layout.addLayout(distinctive_controls)
+        self.distinctive_table = QTableWidget(0, 3)
+        self.distinctive_table.setHorizontalHeaderLabels(["Ayırt Edici İfade", "Skor", "Sıklık"])
+        self.distinctive_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.distinctive_table.setAlternatingRowColors(True)
+        distinctive_header = self.distinctive_table.horizontalHeader()
+        distinctive_header.setSectionResizeMode(0, QHeaderView.Stretch)
+        distinctive_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        distinctive_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        distinctive_layout.addWidget(self.distinctive_table)
+        tabs.addTab(self.distinctive_tab, "Kategori İfadeleri")
 
         layout.addWidget(tabs, 1)
         self.progress = QProgressBar()
@@ -226,7 +271,18 @@ class MainWindow(QMainWindow):
             return
         if self.process and self.process.state() != QProcess.NotRunning:
             return
-        args = ["-m", "scrapy", "crawl", "complaints", "-a", f"company={company}", "-a", f"start_date={self.start_date.date().toString('yyyy-MM-dd')}", "-a", f"end_date={self.end_date.date().toString('yyyy-MM-dd')}", "-a", f"max_pages={self.max_pages.value()}"]
+
+        try:
+            args = build_scrapy_args(
+                company,
+                self.start_date.date().toString("yyyy-MM-dd"),
+                self.end_date.date().toString("yyyy-MM-dd"),
+                self.max_pages.value(),
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, APP_TITLE, str(exc))
+            return
+
         self.process = QProcess(self)
         self.process.setProgram(sys.executable)
         self.process.setArguments(args)
@@ -266,14 +322,17 @@ class MainWindow(QMainWindow):
 
     def refresh_data(self):
         try:
-            metrics = self.repo.metrics()
-            self.total_card[1].setText(str(metrics["total"]))
-            self.resolved_card[1].setText(self._pct(metrics["resolved"], metrics["total"]))
-            self.response_card[1].setText(self._pct(metrics["responded"], metrics["total"]))
             rows = self.repo.list_complaints(limit=500)
             self.table.setRowCount(len(rows))
             for r, row in enumerate(rows):
-                values = [row["complaint_date"] or "", row["company"] or "", row["title"] or "", "Evet" if row["resolved"] else "Hayır", "Evet" if row["company_responded"] else "Hayır", row["complaint_url"] or ""]
+                values = [
+                    row["complaint_date"] or "",
+                    row["company"] or "",
+                    row["title"] or "",
+                    "Evet" if row["resolved"] else "Hayır",
+                    "Evet" if row["company_responded"] else "Hayır",
+                    row["complaint_url"] or "",
+                ]
                 for c, value in enumerate(values):
                     item = QTableWidgetItem(str(value))
                     if c in (3, 4):
@@ -292,16 +351,30 @@ class MainWindow(QMainWindow):
     def refresh_analysis(self):
         try:
             company, start, end, records = self._filtered_records()
+            total = len(records)
+            resolved = sum(int(bool(row.get("resolved"))) for row in records)
+            responded = sum(int(bool(row.get("company_responded"))) for row in records)
+            self.total_card[1].setText(str(total))
+            self.resolved_card[1].setText(self._pct(resolved, total))
+            self.response_card[1].setText(self._pct(responded, total))
+
             summary = category_summary(records)
             self.category_table.setRowCount(len(summary))
             for r, item in enumerate(summary):
-                values = [item["category"], item["complaints"], item["resolved"], f"%{item['resolved_rate']:.1f}", f"%{item['response_rate']:.1f}"]
+                values = [
+                    item["category"],
+                    item["complaints"],
+                    item["resolved"],
+                    f"%{item['resolved_rate']:.1f}",
+                    f"%{item['response_rate']:.1f}",
+                ]
                 for c, value in enumerate(values):
                     cell = QTableWidgetItem(str(value))
                     if c > 0:
                         cell.setTextAlignment(Qt.AlignCenter)
                     self.category_table.setItem(r, c, cell)
             self.refresh_word_analysis(records=records)
+            self.refresh_distinctive_analysis(records=records)
             self.log.append(f"Analiz güncellendi: {company}, {start}–{end}, {len(records)} kayıt.")
         except sqlite3.Error as exc:
             self.log.append(f"Analiz veritabanı uyarısı: {exc}")
@@ -320,7 +393,12 @@ class MainWindow(QMainWindow):
             terms = sorted(frequencies, key=lambda t: frequencies[t], reverse=True)[:50]
             self.word_table.setRowCount(len(terms))
             for r, term in enumerate(terms):
-                values = [term, frequencies.get(term, 0), f"{tfidf_map.get(term, 0.0):.2f}", doc_freq.get(term, 0)]
+                values = [
+                    term,
+                    frequencies.get(term, 0),
+                    f"{tfidf_map.get(term, 0.0):.2f}",
+                    doc_freq.get(term, 0),
+                ]
                 for c, value in enumerate(values):
                     cell = QTableWidgetItem(str(value))
                     if c > 0:
@@ -328,6 +406,37 @@ class MainWindow(QMainWindow):
                     self.word_table.setItem(r, c, cell)
         except sqlite3.Error as exc:
             self.log.append(f"Kelime analizi veritabanı uyarısı: {exc}")
+
+    def refresh_distinctive_analysis(self, *_args, records=None):
+        try:
+            if records is None:
+                _company, _start, _end, records = self._filtered_records()
+            n = int(self.distinctive_ngram_combo.currentData() or 2)
+            current_category = self.distinctive_category_combo.currentText()
+            self._distinctive_cache = category_distinctive_terms(records, n=n, top_k=30)
+
+            self.distinctive_category_combo.blockSignals(True)
+            self.distinctive_category_combo.clear()
+            categories = sorted(self._distinctive_cache)
+            self.distinctive_category_combo.addItems(categories)
+            if current_category in categories:
+                self.distinctive_category_combo.setCurrentText(current_category)
+            self.distinctive_category_combo.blockSignals(False)
+            self._render_distinctive_category()
+        except sqlite3.Error as exc:
+            self.log.append(f"Kategori ifade analizi veritabanı uyarısı: {exc}")
+
+    def _render_distinctive_category(self, *_args):
+        category = self.distinctive_category_combo.currentText()
+        rows = self._distinctive_cache.get(category, [])
+        self.distinctive_table.setRowCount(len(rows))
+        for r, item in enumerate(rows):
+            values = [item.term, f"{item.score:.2f}", item.count]
+            for c, value in enumerate(values):
+                cell = QTableWidgetItem(str(value))
+                if c > 0:
+                    cell.setTextAlignment(Qt.AlignCenter)
+                self.distinctive_table.setItem(r, c, cell)
 
     @staticmethod
     def _pct(part: int, total: int) -> str:
