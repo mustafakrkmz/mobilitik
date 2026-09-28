@@ -4,9 +4,21 @@ Mobilya sektöründeki tüketici şikâyetlerini akademik araştırma amacıyla 
 
 ## Amaç
 
-Şikayetvar üzerindeki herkese açık firma şikâyetlerini düşük hızda ve araştırma odaklı şekilde toplamak; kayıtları firma, tarih, başlık, tam metin, çözülme durumu ve firma yanıtı gibi alanlarla SQLite veritabanına kaydetmek ve seçilen firma/tarih aralığı için tekrarlanabilir analiz üretmek.
+Şikayetvar üzerindeki herkese açık firma şikâyetlerini düşük hızda ve araştırma odaklı şekilde toplamak; kayıtları firma, tarih, başlık, tam metin, çözülme durumu, firma yanıtı ve mümkün olduğunda yanıt/çözüm süreleriyle SQLite veritabanına kaydetmek ve seçilen firma/tarih aralığı için tekrarlanabilir analiz üretmek.
 
-## Kurulum
+## Windows — en kolay kurulum
+
+1. GitHub'da yeşil **Code** düğmesine basın.
+2. **Download ZIP** ile projeyi indirin.
+3. ZIP dosyasını normal bir klasöre çıkarın.
+4. **`install_windows.bat`** dosyasına çift tıklayın.
+5. Kurulum bittiğinde masaüstündeki **Mobilitik** kısayolunu açın.
+
+Kurucu sanal Python ortamını, gerekli paketleri ve Playwright Chromium'u otomatik hazırlar. Python bulunamazsa ve Windows Package Manager (`winget`) varsa Python 3.12 kurulumunu da başlatabilir.
+
+Ayrıntılı Türkçe yönerge: **[WINDOWS_KURULUM.md](WINDOWS_KURULUM.md)**
+
+## Elle kurulum
 
 ```bash
 python -m venv .venv
@@ -31,11 +43,24 @@ Arayüz üzerinden:
 - veri toplama başlatılıp durdurulabilir,
 - toplanan kayıtlar yerel tabloda görüntülenebilir,
 - seçili firma ve dönem için toplam şikâyet, çözülme oranı ve firma yanıt oranı görülebilir,
+- açık tarih verisi varsa medyan firma yanıt süresi ve medyan çözüm süresi hesaplanabilir,
+- kategori bazında yanıt ve çözüm süreleri karşılaştırılabilir,
 - kategori analizi yapılabilir,
 - tek kelime, bigram ve trigram sıklıkları incelenebilir,
 - TF-IDF ağırlıkları ve belge sıklıkları görüntülenebilir,
 - her şikâyet kategorisini diğerlerinden ayıran kelime/n-gram ifadeleri incelenebilir,
 - veriler CSV veya Excel olarak dışa aktarılabilir.
+
+## Yanıt ve çözüm süreleri
+
+Mobilitik süre üretirken muhafazakâr davranır:
+
+- Şikâyetin yayın tarihi ile firma yanıtının açık tarihi bulunuyorsa `response_hours` hesaplanır.
+- Şikâyet çözülmüşse ve çözüm/sonuç bölümünde açık tarih bulunuyorsa `resolution_hours` hesaplanır.
+- Sayfada yalnızca `Çözüldü` etiketi bulunuyor fakat çözüm tarihi görünmüyorsa çözülme durumu kaydedilir, **çözüm süresi tahmin edilmez**.
+- İmkânsız kronoloji (ör. yanıt tarihi şikâyetten önce) görülürse süre boş bırakılır.
+
+Bu yaklaşım, eksik platform verisini araştırma verisi gibi göstermemek için bilinçli olarak seçilmiştir.
 
 ## Kategori analizi
 
@@ -51,7 +76,7 @@ Başlangıç kategorileri:
 - Satış / İletişim
 - Diğer
 
-Her kategori için şikâyet sayısı, çözülen şikâyet sayısı, çözülme oranı ve firma yanıt oranı hesaplanır. Kategori sözlüğü gerçek verilerden elde edilen kelime ve n-gram bulgularına göre kalibre edilecektir.
+Her kategori için şikâyet sayısı, çözülen şikâyet sayısı, çözülme oranı, firma yanıt oranı ve veri mevcutsa medyan yanıt/çözüm süresi hesaplanır. Kategori sözlüğü gerçek verilerden elde edilen kelime ve n-gram bulgularına göre kalibre edilecektir.
 
 ## Kelime analizi
 
@@ -69,19 +94,18 @@ Bu katman özellikle `teslimat tarihi`, `servis kaydı`, `koltuk kumaşı`, `mek
 
 `Kategori İfadeleri` sekmesi, her kategorideki şikâyetleri diğer kategorilerle karşılaştırır ve o kategori için görece daha ayırt edici olan unigram, bigram veya trigramları sıralar. Böylece önceden tanımlanmamış fakat gerçek veride sık tekrar eden sorun kalıpları kategori sözlüğüne kontrollü biçimde eklenebilir.
 
-Örneğin teslimat şikâyetlerinde `teslimat tarihi`, üretim/kalite şikâyetlerinde `koltuk kumaşı` veya aksesuar şikâyetlerinde `çekmece rayı` gibi ifadeler veri içinden keşfedilebilir.
-
 ## Otomatik testler
 
 GitHub Actions üzerinde otomatik test paketi çalışır. Test kapsamı şunları içerir:
 
-- Türkçe tarih ayrıştırma,
+- Türkçe ve ISO tarih ayrıştırma,
+- yanıt/çözüm sürelerinin hesaplanması ve negatif sürelerin reddedilmesi,
 - kategori sınıflandırma ve çoklu kategori davranışı,
 - yanlış alt-kelime eşleşmelerinin engellenmesi,
-- kategori özetleri ve çözülme/yanıt oranları,
+- kategori özetleri, çözülme/yanıt oranları ve medyan süreler,
 - unigram/bigram/trigram, belge sıklığı ve TF-IDF,
 - kategoriye özgü ayırt edici ifade analizi,
-- SQLite pipeline insert/update davranışı,
+- SQLite pipeline insert/update ve eski veritabanı şema migrasyonu,
 - veritabanı firma/tarih filtreleri,
 - CSV ve Excel dışa aktarma,
 - örnek Şikayetvar HTML'i üzerinden liste/detay parser davranışı,
@@ -107,12 +131,6 @@ scrapy crawl complaints \
   -a end_date=2026-09-28
 ```
 
-Başka bir firma için yalnızca `company` slug'ını değiştirin:
-
-```bash
-scrapy crawl complaints -a company=bellona -a max_pages=5
-```
-
 Veriler varsayılan olarak `mobilitik.db` dosyasındaki `complaints` tablosuna yazılır. Aynı şikâyet URL'si tekrar görülürse yeni satır oluşturmak yerine mevcut kayıt güncellenir.
 
 ## Veri alanları
@@ -125,6 +143,11 @@ Veriler varsayılan olarak `mobilitik.db` dosyasındaki `complaints` tablosuna y
 - `resolved`
 - `company_responded`
 - `company_response_text`
+- `company_response_date`
+- `response_hours`
+- `resolution_text`
+- `resolution_date`
+- `resolution_hours`
 - `listing_page`
 - `scraped_at`
 
@@ -133,16 +156,13 @@ Veriler varsayılan olarak `mobilitik.db` dosyasındaki `complaints` tablosuna y
 - `ROBOTSTXT_OBEY = True` ve düşük istek eşzamanlılığı varsayılan olarak etkindir.
 - Şikayetvar HTML yapısını değiştirdiğinde CSS seçicilerinin güncellenmesi gerekebilir.
 - Çözülme durumu liste kartındaki işaretten alınmaktadır.
-- Firma yanıtının ve özellikle yanıt/çözüm tarihinin seçicileri ayrıca doğrulanmaya devam etmektedir.
+- Yanıt/çözüm tarihleri yalnızca açıkça yayınlandığında kullanılır.
 - Tarihte yıl görünmediğinde mevcut yıl körlemesine atanmaz; yıl geçişlerinde geçmiş tarih olasılığı dikkate alınır.
 - Otomatik testler uygulama mantığını ve örnek HTML parser davranışını doğrular; harici sitenin gelecekteki DOM değişikliklerini garanti edemez.
-- Windows paketleme aşamasından önce gerçek Windows makinede son uçtan uca test yapılacaktır.
 
 ## Yol haritası
 
-1. Firma yanıt tarihi ve çözüm tarihini güvenilir biçimde çıkarma
-2. Yanıt ve çözüm süresi metrikleri
-3. Kategori sözlüğünü gerçek mobilya şikâyetleriyle kalibre etme
-4. Firma karşılaştırmalı grafikler ve zaman serileri
-5. Analiz sonuçlarını filtreli Excel/rapor olarak dışa aktarma
-6. Windows için tek dosyalı/kurulumlu dağıtım hazırlama
+1. Kategori sözlüğünü gerçek mobilya şikâyetleriyle kalibre etme
+2. Firma karşılaştırmalı grafikler ve zaman serileri
+3. Analiz sonuçlarını filtreli Excel/rapor olarak dışa aktarma
+4. Python gerektirmeyen bağımsız Windows paketleme seçeneğini geliştirme
