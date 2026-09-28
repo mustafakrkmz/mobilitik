@@ -9,13 +9,6 @@ from typing import Iterable
 
 TOKEN_RE = re.compile(r"[A-Za-zÇĞİÖŞÜçğıöşü]+", re.UNICODE)
 
-STOPWORDS = {
-    "ve", "veya", "ile", "bir", "bu", "şu", "o", "de", "da", "ki", "için", "ama", "ancak",
-    "çok", "daha", "en", "gibi", "kadar", "sonra", "önce", "olan", "olarak", "ise", "ben", "biz",
-    "siz", "onlar", "bana", "bizi", "beni", "bunun", "bunu", "şirket", "firma", "ürün", "aldım",
-    "aldık", "ettim", "edildi", "ediyor", "oldu", "oluyor", "var", "yok", "hala", "artık",
-}
-
 
 def normalize_text(text: str) -> str:
     text = (text or "").lower()
@@ -28,6 +21,15 @@ def normalize_text(text: str) -> str:
         .replace("ç", "c")
     )
     return re.sub(r"\s+", " ", text).strip()
+
+
+_RAW_STOPWORDS = {
+    "ve", "veya", "ile", "bir", "bu", "şu", "o", "de", "da", "ki", "için", "ama", "ancak",
+    "çok", "daha", "en", "gibi", "kadar", "sonra", "önce", "olan", "olarak", "ise", "ben", "biz",
+    "siz", "onlar", "bana", "bizi", "beni", "bunun", "bunu", "şirket", "firma", "ürün", "aldım",
+    "aldık", "ettim", "edildi", "ediyor", "oldu", "oluyor", "var", "yok", "hala", "artık",
+}
+STOPWORDS = {normalize_text(word) for word in _RAW_STOPWORDS}
 
 
 def tokenize(text: str, min_len: int = 3) -> list[str]:
