@@ -86,6 +86,14 @@ def _normalize(text: str) -> str:
     return " ".join(text.split())
 
 
+def _contains_phrase(normalized_text: str, phrase: str) -> bool:
+    normalized_phrase = _normalize(phrase)
+    if not normalized_phrase:
+        return False
+    pattern = rf"(?<!\w){re.escape(normalized_phrase)}(?!\w)"
+    return re.search(pattern, normalized_text, flags=re.UNICODE) is not None
+
+
 @dataclass(frozen=True)
 class ClassificationResult:
     primary_category: str
@@ -106,7 +114,7 @@ def classify_text(text: str, *, threshold: float = 2.0) -> ClassificationResult:
         score = 0.0
         hits: list[str] = []
         for phrase, weight in rules.items():
-            if _normalize(phrase) in normalized:
+            if _contains_phrase(normalized, phrase):
                 score += weight
                 hits.append(phrase)
         if score >= threshold:
