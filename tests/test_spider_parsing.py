@@ -30,7 +30,39 @@ def test_start_yields_initial_listing_request():
     assert request.meta["playwright"] is True
 
 
-def test_parse_listing_extracts_detail_url_and_resolved_state():
+def test_parse_listing_supports_current_markup():
+    spider = ComplaintSpider(company="istikbal", max_pages=1)
+    html = """
+    <html><body>
+      <article class="relative ga-c ga-v border-zinc-200 py-8 border-b">
+        <a class="after:absolute after:inset-0 after:z-10"
+           href="/istikbal/teslim-edilmeyen-koltuk">
+          Teslim Edilmeyen Koltuk
+        </a>
+        <a href="/uye/ornek">Ayşe</a>
+        <span>28 Eylül 16:55</span>
+        <p>Ürünüm belirtilen tarihte teslim edilmedi.</p>
+        <span>Çözüldü</span>
+      </article>
+    </body></html>
+    """
+    response = _response(
+        "https://www.sikayetvar.com/istikbal?page=1",
+        html,
+        {"page_num": 1},
+    )
+
+    requests = list(spider.parse_listing(response))
+    assert len(requests) == 1
+    detail = requests[0]
+    assert detail.url == "https://www.sikayetvar.com/istikbal/teslim-edilmeyen-koltuk"
+    assert detail.meta["listing_page"] == 1
+    assert detail.meta["listing_resolved"] is True
+    assert detail.meta["listing_title"] == "Teslim Edilmeyen Koltuk"
+    assert detail.meta["listing_date"] is not None
+
+
+def test_parse_listing_keeps_legacy_markup_compatibility():
     spider = ComplaintSpider(company="istikbal", max_pages=1)
     html = """
     <html><body>
@@ -45,13 +77,9 @@ def test_parse_listing_extracts_detail_url_and_resolved_state():
         html,
         {"page_num": 1},
     )
-
     requests = list(spider.parse_listing(response))
     assert len(requests) == 1
-    detail = requests[0]
-    assert detail.url == "https://www.sikayetvar.com/istikbal/ornek-sikayet"
-    assert detail.meta["listing_page"] == 1
-    assert detail.meta["listing_resolved"] is True
+    assert requests[0].url == "https://www.sikayetvar.com/istikbal/ornek-sikayet"
 
 
 def test_parse_complaint_extracts_core_fields_and_timing():
@@ -96,6 +124,26 @@ def test_parse_complaint_extracts_core_fields_and_timing():
     assert item["resolution_date"] == "2026-01-02 18:24:00"
     assert item["resolution_hours"] == 48.0
     assert "teşekkür" in item["resolution_text"]
+
+
+def test_detail_can_fall_back_to_listing_title_and_date():
+    spider = ComplaintSpider(company="istikbal")
+    html = "<html><body><div class='complaint-detail-description'>Metin burada.</div></body></html>"
+    response = _response(
+        "https://www.sikayetvar.com/istikbal/yeni-yapi",
+        html,
+        {
+            "ref_url": "https://www.sikayetvar.com/istikbal/yeni-yapi",
+            "listing_page": 1,
+            "listing_resolved": False,
+            "listing_title": "Liste Başlığı",
+            "listing_date": "2026-09-28 16:55:00",
+        },
+    )
+    item = list(spider.parse_complaint(response))[0]
+    assert item["title"] == "Liste Başlığı"
+    assert item["complaint_date"] == "2026-09-28 16:55:00"
+    assert item["complaint_text"] == "Metin burada."
 
 
 def test_timing_is_left_empty_when_status_has_no_explicit_date():
