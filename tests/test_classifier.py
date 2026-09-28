@@ -27,3 +27,8 @@ def test_unknown_goes_to_other():
     result = classify_text("Bu deneyimden genel olarak memnun kalmadım.")
     assert result.primary_category == "Diğer"
     assert result.categories == []
+
+
+def test_short_rule_does_not_match_inside_another_word():
+    result = classify_text("Buraya kadar süreç normal ilerledi.")
+    assert "Aksesuar / Donanım" not in result.categories
