@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
-from collections import defaultdict
 
 from mobilitik.analysis.nlp_store import SentimentStore
 from mobilitik.analysis.sentiment import (
     ANALYZER_VERSION,
     DEFAULT_MODEL_ID,
     aggregate_aspect_sentiment,
+    aspect_fingerprint,
     aspect_sentence_map,
     complaint_text,
     scores_from_pipeline_output,
@@ -74,12 +73,13 @@ def run(
         text = complaint_text(record.get("title"), record.get("complaint_text"))
         if not text:
             continue
-        fingerprint = text_fingerprint(record.get("title"), record.get("complaint_text"))
+        sentiment_hash = text_fingerprint(record.get("title"), record.get("complaint_text"))
+        aspect_hash = aspect_fingerprint(record.get("title"), record.get("complaint_text"))
         sentiment_current = (
-            store.cached_hash(record["id"], model_id, ANALYZER_VERSION) == fingerprint
+            store.cached_hash(record["id"], model_id, ANALYZER_VERSION) == sentiment_hash
         )
         aspect_current = (
-            store.aspect_cached_hash(record["id"], model_id, ANALYZER_VERSION) == fingerprint
+            store.aspect_cached_hash(record["id"], model_id, ANALYZER_VERSION) == aspect_hash
         )
         if sentiment_current and aspect_current:
             cached_count += 1
@@ -88,7 +88,8 @@ def run(
             {
                 "record": record,
                 "text": text,
-                "hash": fingerprint,
+                "sentiment_hash": sentiment_hash,
+                "aspect_hash": aspect_hash,
                 "sentiment_needed": not sentiment_current,
                 "aspect_needed": not aspect_current,
             }
@@ -136,7 +137,7 @@ def run(
                     record["id"],
                     model_id,
                     ANALYZER_VERSION,
-                    job["hash"],
+                    job["sentiment_hash"],
                     label=score.label,
                     confidence=score.confidence,
                     negative=score.negative,
@@ -155,7 +156,7 @@ def run(
                     record["id"],
                     model_id,
                     ANALYZER_VERSION,
-                    job["hash"],
+                    job["aspect_hash"],
                     [
                         {
                             "category": aspect.category,
