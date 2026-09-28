@@ -76,15 +76,32 @@ class ComplaintRepository:
             ).fetchall()
         return rows
 
-    def all_complaints(self):
+    def filtered_complaints(self, company: str | None = None, start_date: str | None = None, end_date: str | None = None):
+        clauses = []
+        params: list[str] = []
+
+        if company:
+            clauses.append("company = ?")
+            params.append(company)
+        if start_date:
+            clauses.append("date(complaint_date) >= date(?)")
+            params.append(start_date)
+        if end_date:
+            clauses.append("date(complaint_date) <= date(?)")
+            params.append(end_date)
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"""
+            SELECT *
+            FROM complaints
+            {where}
+            ORDER BY COALESCE(complaint_date, scraped_at) DESC, id DESC
+        """
         with self._connect() as conn:
-            return conn.execute(
-                """
-                SELECT *
-                FROM complaints
-                ORDER BY COALESCE(complaint_date, scraped_at) DESC, id DESC
-                """
-            ).fetchall()
+            return conn.execute(query, params).fetchall()
+
+    def all_complaints(self):
+        return self.filtered_complaints()
 
     def export_csv(self, path: Path):
         rows = self.all_complaints()
