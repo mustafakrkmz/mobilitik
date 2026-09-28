@@ -22,9 +22,14 @@ def test_category_summary_counts_multilabel_rates_and_timing():
     ]
 
     summary = {row["category"]: row for row in category_summary(rows)}
+    all_rows = summary["Tümü"]
     delivery = summary["Teslimat / Lojistik"]
     service = summary["Montaj / Servis"]
 
+    assert all_rows["complaints"] == 2
+    assert all_rows["resolved_rate"] == 50.0
+    assert all_rows["response_rate"] == 100.0
+    assert all_rows["median_response_hours"] == 6.0
     assert delivery["complaints"] == 2
     assert delivery["resolved"] == 1
     assert delivery["resolved_rate"] == 50.0
@@ -38,7 +43,7 @@ def test_category_summary_counts_multilabel_rates_and_timing():
     assert service["median_response_hours"] == 4.0
 
 
-def test_category_summary_puts_unmatched_in_other():
+def test_category_summary_puts_unmatched_in_other_and_keeps_all_row():
     summary = category_summary([
         {
             "title": "Genel memnuniyetsizlik",
@@ -47,7 +52,9 @@ def test_category_summary_puts_unmatched_in_other():
             "company_responded": 0,
         }
     ])
-    assert summary[0]["category"] == "Diğer"
+    assert summary[0]["category"] == "Tümü"
     assert summary[0]["complaints"] == 1
-    assert summary[0]["median_response_hours"] is None
-    assert summary[0]["median_resolution_hours"] is None
+    assert summary[1]["category"] == "Diğer"
+    assert summary[1]["complaints"] == 1
+    assert summary[1]["median_response_hours"] is None
+    assert summary[1]["median_resolution_hours"] is None
