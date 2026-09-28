@@ -5,7 +5,7 @@ def test_turkish_normalization():
     assert normalize_text("Kırık Şifonyer Ürünü") == "kirik sifonyer urunu"
 
 
-def test_stopwords_removed():
+def test_stopwords_removed_after_normalization():
     tokens = tokenize("Bu ürün teslimat için çok geç geldi")
     assert "urun" not in tokens
     assert "icin" not in tokens
@@ -34,3 +34,12 @@ def test_tfidf_returns_terms():
     terms = analyzer.tfidf(n=2, top_k=10, min_doc_freq=1)
     names = {item.term for item in terms}
     assert "koltuk kumasi" in names
+
+
+def test_trigrams_are_supported():
+    analyzer = TextAnalyzer([
+        "teknik servis kaydı açıldı",
+        "teknik servis kaydı kapandı",
+    ])
+    top = dict(analyzer.top_ngrams(n=3, top_k=10))
+    assert top["teknik servis kaydi"] == 2
