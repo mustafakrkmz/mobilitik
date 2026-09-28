@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from mobilitik.company import normalize_company_input
+
 
 def build_scrapy_args(
     company: str,
@@ -7,9 +9,7 @@ def build_scrapy_args(
     end_date: str,
     max_pages: int,
 ) -> list[str]:
-    company = company.strip().strip("/")
-    if not company:
-        raise ValueError("company is required")
+    company = normalize_company_input(company)
     if start_date > end_date:
         raise ValueError("start_date cannot be after end_date")
     if int(max_pages) < 1:
