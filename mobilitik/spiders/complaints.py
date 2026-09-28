@@ -54,7 +54,6 @@ COMPLAINT_BODY_SELECTORS = (
 
 
 def parse_sikayetvar_date(text: str, reference_date: dt.date | None = None) -> dt.datetime | None:
-    """Backward-compatible wrapper for the shared date parser."""
     return parse_datetime(text, reference_date=reference_date)
 
 
@@ -70,7 +69,6 @@ def _clean_text(parts) -> str | None:
 
 
 def _structured_complaint_text(response) -> str | None:
-    """Try common JSON-LD body fields before falling back to listing text."""
     wanted = ("reviewBody", "articleBody", "description")
 
     def walk(value):
@@ -104,13 +102,12 @@ def _structured_complaint_text(response) -> str | None:
 def _extract_complaint_text(response) -> str | None:
     for selector in COMPLAINT_BODY_SELECTORS:
         text = _clean_text(response.css(selector).getall())
-        if text and len(text) >= 20:
+        if text:
             return text
     return _structured_complaint_text(response)
 
 
 def _listing_excerpt(card, title: str | None, normalized_card_text: str) -> str | None:
-    """Keep a useful visible excerpt when the detail DOM changes again."""
     for selector in ("p ::text", "[class*='description'] ::text", "[class*='content'] ::text"):
         text = _clean_text(card.css(selector).getall())
         if text and len(text) >= 20:
@@ -123,7 +120,6 @@ def _listing_excerpt(card, title: str | None, normalized_card_text: str) -> str 
 
 
 def _event_from_containers(response, selectors: tuple[str, ...]) -> tuple[str | None, dt.datetime | None]:
-    """Return the first meaningful event text and an explicit date when present."""
     fallback_text: str | None = None
     for selector in selectors:
         for node in response.css(selector):
@@ -167,29 +163,17 @@ class ComplaintSpider(scrapy.Spider):
         "PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT": 60_000,
     }
 
-    def __init__(
-        self,
-        company: str | None = None,
-        start_date: str | None = None,
-        end_date: str | None = None,
-        start_page: int | str = 1,
-        max_pages: int | str | None = None,
-        *args,
-        **kwargs,
-    ):
+    def __init__(self, company=None, start_date=None, end_date=None, start_page=1, max_pages=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         try:
             self.company = normalize_company_input(company or "")
         except ValueError as exc:
             raise CloseSpider(str(exc)) from exc
-
         self.start_page = int(start_page)
         self.max_pages = int(max_pages) if max_pages else None
         self.items_collected = 0
-
         self.start_date = dt.datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else None
         self.end_date = dt.datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else None
-
         if self.start_date and self.end_date and self.start_date > self.end_date:
             raise CloseSpider("start_date cannot be after end_date")
 
@@ -223,33 +207,21 @@ class ComplaintSpider(scrapy.Spider):
 
     def parse_listing(self, response):
         page_num = response.meta["page_num"]
-
         if response.status in (403, 429):
             self.logger.error(
-                "Şikayetvar erişimi HTTP %s ile engelledi. Bu bir veri-yok durumu değildir; "
-                "site erişim kısıtı/Cloudflare olabilir. Mobilitik korumayı aşmaya çalışmaz.",
+                "Şikayetvar erişimi HTTP %s ile engelledi. Bu bir veri-yok durumu değildir; site erişim kısıtı/Cloudflare olabilir. Mobilitik korumayı aşmaya çalışmaz.",
                 response.status,
             )
             raise CloseSpider("site_access_blocked")
 
         page_text = " ".join(response.css("body ::text").getall()).lower()
         if "just a moment" in page_text or "checking your browser" in page_text:
-            self.logger.error(
-                "Şikayetvar bir tarayıcı doğrulama/Cloudflare sayfası döndürdü. "
-                "Mobilitik bu korumayı aşmaya çalışmaz."
-            )
+            self.logger.error("Şikayetvar bir tarayıcı doğrulama/Cloudflare sayfası döndürdü. Mobilitik bu korumayı aşmaya çalışmaz.")
             raise CloseSpider("site_access_challenge")
 
-        cards = response.css("article.ga-c.ga-v")
+        cards = response.css("article.ga-c.ga-v") or response.css("article.card-v2.ga-v.ga-c")
         if not cards:
-            cards = response.css("article.card-v2.ga-v.ga-c")
-
-        if not cards:
-            self.logger.error(
-                "Sayfa açıldı ancak şikâyet kartı bulunamadı (sayfa %s). "
-                "Şikayetvar HTML yapısı değişmiş olabilir.",
-                page_num,
-            )
+            self.logger.error("Sayfa açıldı ancak şikâyet kartı bulunamadı (sayfa %s). Şikayetvar HTML yapısı değişmiş olabilir.", page_num)
             return
 
         detail_requests = 0
@@ -291,13 +263,7 @@ class ComplaintSpider(scrapy.Spider):
                 },
             )
 
-        self.logger.info(
-            "Page %s: queued %s complaint detail requests; skipped %s outside date range.",
-            page_num,
-            detail_requests,
-            skipped_by_date,
-        )
-
+        self.logger.info("Page %s: queued %s complaint detail requests; skipped %s outside date range.", page_num, detail_requests, skipped_by_date)
         if self.max_pages and page_num >= self.start_page + self.max_pages - 1:
             return
         yield self._listing_request(page_num + 1)
@@ -311,31 +277,23 @@ class ComplaintSpider(scrapy.Spider):
         parsed_date = parse_sikayetvar_date(date_text) if date_text else None
         if parsed_date is None:
             parsed_date = parse_datetime(response.meta.get("listing_date"))
-
         if parsed_date and not self._in_requested_range(parsed_date):
             self.logger.debug("Skipping complaint outside requested date range: %s", response.url)
             return
 
-        title_parts = response.css("h1.complaint-detail-title ::text").getall()
-        if not title_parts:
-            title_parts = response.css("h1 ::text").getall()
+        title_parts = response.css("h1.complaint-detail-title ::text").getall() or response.css("h1 ::text").getall()
         title = _clean_text(title_parts) or response.meta.get("listing_title")
-
-        complaint_text = _extract_complaint_text(response)
-        if not complaint_text:
-            complaint_text = response.meta.get("listing_excerpt")
-            if complaint_text:
-                self.logger.debug("Using listing excerpt as complaint-text fallback: %s", response.url)
-
+        complaint_text = _extract_complaint_text(response) or response.meta.get("listing_excerpt")
         resolved = bool(response.meta.get("listing_resolved"))
+
         company_response_text, company_response_date = _event_from_containers(response, RESPONSE_CONTAINER_SELECTORS)
         response_hours = elapsed_hours(parsed_date, company_response_date)
         if company_response_date is not None and response_hours is None:
             company_response_date = None
 
-        resolution_text: str | None = None
-        resolution_date: dt.datetime | None = None
-        resolution_hours: float | None = None
+        resolution_text = None
+        resolution_date = None
+        resolution_hours = None
         if resolved:
             resolution_text, resolution_date = _event_from_containers(response, RESOLUTION_CONTAINER_SELECTORS)
             resolution_hours = elapsed_hours(parsed_date, resolution_date)
