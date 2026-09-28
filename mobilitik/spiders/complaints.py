@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from urllib.parse import urljoin
 
 import scrapy
@@ -42,6 +43,15 @@ DATE_VALUE_SELECTORS = (
     "[class*='time']::text",
 )
 
+COMPLAINT_BODY_SELECTORS = (
+    "div.complaint-detail-description ::text",
+    "[class*='complaint-detail-description'] ::text",
+    "[class*='complaint-description'] ::text",
+    "[data-testid*='complaint-description'] ::text",
+    "[data-testid*='complaint-content'] ::text",
+    "article [class*='description'] ::text",
+)
+
 
 def parse_sikayetvar_date(text: str, reference_date: dt.date | None = None) -> dt.datetime | None:
     """Backward-compatible wrapper for the shared date parser."""
@@ -52,6 +62,64 @@ def _normalized_text(selector) -> str | None:
     parts = [part.strip() for part in selector.css("::text").getall() if part.strip()]
     value = " ".join(parts)
     return " ".join(value.split()) or None
+
+
+def _clean_text(parts) -> str | None:
+    value = " ".join(str(part).strip() for part in parts if str(part).strip())
+    return " ".join(value.split()) or None
+
+
+def _structured_complaint_text(response) -> str | None:
+    """Try common JSON-LD body fields before falling back to listing text."""
+    wanted = ("reviewBody", "articleBody", "description")
+
+    def walk(value):
+        if isinstance(value, dict):
+            for key in wanted:
+                candidate = value.get(key)
+                if isinstance(candidate, str) and len(candidate.strip()) >= 40:
+                    return " ".join(candidate.split())
+            for child in value.values():
+                found = walk(child)
+                if found:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = walk(child)
+                if found:
+                    return found
+        return None
+
+    for raw in response.css('script[type="application/ld+json"]::text').getall():
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        found = walk(parsed)
+        if found:
+            return found
+    return None
+
+
+def _extract_complaint_text(response) -> str | None:
+    for selector in COMPLAINT_BODY_SELECTORS:
+        text = _clean_text(response.css(selector).getall())
+        if text and len(text) >= 20:
+            return text
+    return _structured_complaint_text(response)
+
+
+def _listing_excerpt(card, title: str | None, normalized_card_text: str) -> str | None:
+    """Keep a useful visible excerpt when the detail DOM changes again."""
+    for selector in ("p ::text", "[class*='description'] ::text", "[class*='content'] ::text"):
+        text = _clean_text(card.css(selector).getall())
+        if text and len(text) >= 20:
+            return text[:2500]
+
+    fallback = normalized_card_text
+    if title and fallback.startswith(title):
+        fallback = fallback[len(title):].strip()
+    return fallback[:2500] if len(fallback) >= 20 else None
 
 
 def _event_from_containers(response, selectors: tuple[str, ...]) -> tuple[str | None, dt.datetime | None]:
@@ -126,11 +194,9 @@ class ComplaintSpider(scrapy.Spider):
             raise CloseSpider("start_date cannot be after end_date")
 
     async def start(self):
-        """Yield the initial request using the Scrapy 2.13+ start API."""
         yield self._listing_request(self.start_page)
 
     def start_requests(self):
-        """Compatibility fallback for Scrapy versions older than 2.13."""
         yield self._listing_request(self.start_page)
 
     def _listing_request(self, page: int):
@@ -146,10 +212,6 @@ class ComplaintSpider(scrapy.Spider):
         )
 
     def _in_requested_range(self, value: dt.datetime | None) -> bool:
-        """Return True when a parsed complaint date is inside the requested range.
-
-        Missing dates are allowed through so the detail page can make the final decision.
-        """
         if value is None:
             return True
         day = value.date()
@@ -193,10 +255,7 @@ class ComplaintSpider(scrapy.Spider):
         detail_requests = 0
         skipped_by_date = 0
         for card in cards:
-            href = (
-                card.css("h2.complaint-title a::attr(href)").get()
-                or card.css("a::attr(href)").get()
-            )
+            href = card.css("h2.complaint-title a::attr(href)").get() or card.css("a::attr(href)").get()
             if not href or not href.startswith(f"/{self.company}/") or href.startswith("/uye/"):
                 continue
 
@@ -206,17 +265,14 @@ class ComplaintSpider(scrapy.Spider):
                 first_link = links[0] if links else None
                 listing_title = _normalized_text(first_link) if first_link is not None else None
             else:
-                listing_title = " ".join(p.strip() for p in title_parts if p.strip()) or None
+                listing_title = _clean_text(title_parts)
 
             complaint_url = urljoin("https://www.sikayetvar.com", href)
-            card_text = " ".join(card.css("::text").getall())
-            normalized_card_text = " ".join(card_text.split())
+            normalized_card_text = _clean_text(card.css("::text").getall()) or ""
             listing_resolved = "Çözüldü" in normalized_card_text
             listing_date = parse_datetime(normalized_card_text)
+            listing_excerpt = _listing_excerpt(card, listing_title, normalized_card_text)
 
-            # Filter individual cards instead of shutting down the whole spider.
-            # Detail callbacks are asynchronous: one old complaint can arrive before
-            # newer queued complaints, so CloseSpider here/there would drop valid data.
             if not self._in_requested_range(listing_date):
                 skipped_by_date += 1
                 continue
@@ -231,6 +287,7 @@ class ComplaintSpider(scrapy.Spider):
                     "listing_resolved": listing_resolved,
                     "listing_title": listing_title,
                     "listing_date": listing_date.isoformat(sep=" ") if listing_date else None,
+                    "listing_excerpt": listing_excerpt,
                 },
             )
 
@@ -243,7 +300,6 @@ class ComplaintSpider(scrapy.Spider):
 
         if self.max_pages and page_num >= self.start_page + self.max_pages - 1:
             return
-
         yield self._listing_request(page_num + 1)
 
     def parse_complaint(self, response):
@@ -256,22 +312,23 @@ class ComplaintSpider(scrapy.Spider):
         if parsed_date is None:
             parsed_date = parse_datetime(response.meta.get("listing_date"))
 
-        # Never close the spider from a detail callback. Responses are asynchronous,
-        # so an out-of-range detail may arrive before valid queued complaints.
         if parsed_date and not self._in_requested_range(parsed_date):
             self.logger.debug("Skipping complaint outside requested date range: %s", response.url)
             return
 
         title_parts = response.css("h1.complaint-detail-title ::text").getall()
-        body_parts = response.css("div.complaint-detail-description ::text").getall()
+        if not title_parts:
+            title_parts = response.css("h1 ::text").getall()
+        title = _clean_text(title_parts) or response.meta.get("listing_title")
 
-        title = " ".join(p.strip() for p in title_parts if p.strip()) or response.meta.get("listing_title")
-        complaint_text = " ".join(p.strip() for p in body_parts if p.strip()) or None
+        complaint_text = _extract_complaint_text(response)
+        if not complaint_text:
+            complaint_text = response.meta.get("listing_excerpt")
+            if complaint_text:
+                self.logger.debug("Using listing excerpt as complaint-text fallback: %s", response.url)
+
         resolved = bool(response.meta.get("listing_resolved"))
-
-        company_response_text, company_response_date = _event_from_containers(
-            response, RESPONSE_CONTAINER_SELECTORS
-        )
+        company_response_text, company_response_date = _event_from_containers(response, RESPONSE_CONTAINER_SELECTORS)
         response_hours = elapsed_hours(parsed_date, company_response_date)
         if company_response_date is not None and response_hours is None:
             company_response_date = None
@@ -280,9 +337,7 @@ class ComplaintSpider(scrapy.Spider):
         resolution_date: dt.datetime | None = None
         resolution_hours: float | None = None
         if resolved:
-            resolution_text, resolution_date = _event_from_containers(
-                response, RESOLUTION_CONTAINER_SELECTORS
-            )
+            resolution_text, resolution_date = _event_from_containers(response, RESOLUTION_CONTAINER_SELECTORS)
             resolution_hours = elapsed_hours(parsed_date, resolution_date)
             if resolution_date is not None and resolution_hours is None:
                 resolution_date = None
