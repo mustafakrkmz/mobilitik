@@ -13,13 +13,20 @@ STOPWORDS = {
     "ve", "veya", "ile", "bir", "bu", "şu", "o", "de", "da", "ki", "için", "ama", "ancak",
     "çok", "daha", "en", "gibi", "kadar", "sonra", "önce", "olan", "olarak", "ise", "ben", "biz",
     "siz", "onlar", "bana", "bizi", "beni", "bunun", "bunu", "şirket", "firma", "ürün", "aldım",
-    "aldık", "ettim", "edildi", "ediyor", "oldu", "oluyor", "var", "yok", "hala", "hala", "artık",
+    "aldık", "ettim", "edildi", "ediyor", "oldu", "oluyor", "var", "yok", "hala", "artık",
 }
 
 
 def normalize_text(text: str) -> str:
     text = (text or "").lower()
-    text = text.replace("ı", "i").replace("ğ", "g").replace("ü", "u").replace("ş", "s").replace("ö", "o").replace("ç", "c")
+    text = (
+        text.replace("ı", "i")
+        .replace("ğ", "g")
+        .replace("ü", "u")
+        .replace("ş", "s")
+        .replace("ö", "o")
+        .replace("ç", "c")
+    )
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -32,7 +39,7 @@ def tokenize(text: str, min_len: int = 3) -> list[str]:
 def ngrams(tokens: list[str], n: int) -> list[str]:
     if n <= 0:
         return []
-    return [" ".join(tokens[i:i+n]) for i in range(len(tokens) - n + 1)]
+    return [" ".join(tokens[i : i + n]) for i in range(len(tokens) - n + 1)]
 
 
 @dataclass
@@ -52,6 +59,12 @@ class TextAnalyzer:
         for tokens in self.tokenized:
             counter.update(ngrams(tokens, n))
         return counter.most_common(top_k)
+
+    def document_frequency(self, n: int = 1) -> Counter[str]:
+        counter: Counter[str] = Counter()
+        for tokens in self.tokenized:
+            counter.update(set(ngrams(tokens, n)))
+        return counter
 
     def tfidf(self, n: int = 1, top_k: int = 30, min_doc_freq: int = 2) -> list[TermScore]:
         doc_terms: list[list[str]] = [ngrams(tokens, n) for tokens in self.tokenized]
@@ -77,11 +90,7 @@ class TextAnalyzer:
 
 
 def distinctive_terms(grouped_documents: dict[str, list[str]], n: int = 1, top_k: int = 15) -> dict[str, list[TermScore]]:
-    """Return terms that are comparatively distinctive for each group.
-
-    Uses a simple TF-IDF-like weighting across groups. This is intentionally
-    dependency-free and transparent for research auditing.
-    """
+    """Return terms that are comparatively distinctive for each group."""
     group_term_counts: dict[str, Counter[str]] = {}
     group_presence: Counter[str] = Counter()
 
