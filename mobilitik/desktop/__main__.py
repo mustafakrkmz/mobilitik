@@ -1,4 +1,4 @@
-from mobilitik.desktop.app import main
+from mobilitik.desktop.nlp_ui import main
 
 
 if __name__ == "__main__":
