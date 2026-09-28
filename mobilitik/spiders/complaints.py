@@ -6,6 +6,7 @@ from urllib.parse import urljoin
 import scrapy
 from scrapy.exceptions import CloseSpider
 
+from mobilitik.company import normalize_company_input
 from mobilitik.timing import elapsed_hours, first_datetime, parse_datetime
 
 
@@ -109,10 +110,11 @@ class ComplaintSpider(scrapy.Spider):
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        if not company:
-            raise CloseSpider("company parameter is required")
+        try:
+            self.company = normalize_company_input(company or "")
+        except ValueError as exc:
+            raise CloseSpider(str(exc)) from exc
 
-        self.company = company.strip("/")
         self.start_page = int(start_page)
         self.max_pages = int(max_pages) if max_pages else None
         self.items_collected = 0
@@ -162,8 +164,6 @@ class ComplaintSpider(scrapy.Spider):
             )
             raise CloseSpider("site_access_challenge")
 
-        # Current Şikayetvar markup (Sep 2026) uses Tailwind-style classes on
-        # complaint articles. Keep the older selector as a compatibility fallback.
         cards = response.css("article.ga-c.ga-v")
         if not cards:
             cards = response.css("article.card-v2.ga-v.ga-c")
