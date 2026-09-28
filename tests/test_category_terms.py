@@ -23,12 +23,15 @@ def test_category_distinctive_terms_separates_delivery_and_quality():
 
     result = category_distinctive_terms(rows, n=2, top_k=20)
 
+    assert "Tümü" in result
     assert "Teslimat / Lojistik" in result
     assert "Üretim / Kalite" in result
     delivery_terms = {item.term for item in result["Teslimat / Lojistik"]}
     quality_terms = {item.term for item in result["Üretim / Kalite"]}
+    all_terms = {item.term for item in result["Tümü"]}
     assert "teslimat tarihi" in delivery_terms
-    assert "koltuk kumasi" in quality_terms
+    assert "koltuk kumaşı" in quality_terms
+    assert "teslimat tarihi" in all_terms or "koltuk kumaşı" in all_terms
 
 
 def test_category_distinctive_terms_empty_input():
