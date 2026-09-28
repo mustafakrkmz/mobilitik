@@ -13,8 +13,10 @@ def _seed(db_path):
             INSERT INTO complaints (
                 company, complaint_url, complaint_date, title, complaint_text,
                 resolved, company_responded, company_response_text,
+                company_response_date, response_hours,
+                resolution_text, resolution_date, resolution_hours,
                 listing_page, scraped_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -26,6 +28,11 @@ def _seed(db_path):
                     1,
                     1,
                     "İlgileniyoruz",
+                    "2026-03-01 16:00:00",
+                    6.0,
+                    "Sorun çözüldü",
+                    "2026-03-03 10:00:00",
+                    48.0,
                     1,
                     "2026-03-01T11:00:00",
                 ),
@@ -37,6 +44,11 @@ def _seed(db_path):
                     "Kumaş deforme oldu",
                     0,
                     0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
                     None,
                     1,
                     "2026-04-01T11:00:00",
@@ -51,13 +63,27 @@ def test_repository_filters_and_metrics(tmp_path):
     _seed(db_path)
 
     metrics = repo.metrics()
-    assert metrics == {"total": 2, "resolved": 1, "responded": 1}
+    assert metrics == {
+        "total": 2,
+        "resolved": 1,
+        "responded": 1,
+        "timed_responses": 1,
+        "timed_resolutions": 1,
+        "median_response_hours": 6.0,
+        "median_resolution_hours": 48.0,
+    }
 
     rows = repo.filtered_complaints(
         company="istikbal", start_date="2026-01-01", end_date="2026-03-31"
     )
     assert len(rows) == 1
     assert rows[0]["title"] == "Teslimat gecikti"
+
+    filtered_metrics = repo.filtered_metrics(
+        company="istikbal", start_date="2026-01-01", end_date="2026-03-31"
+    )
+    assert filtered_metrics["median_response_hours"] == 6.0
+    assert filtered_metrics["median_resolution_hours"] == 48.0
 
 
 def test_repository_csv_and_excel_export(tmp_path):
@@ -74,6 +100,9 @@ def test_repository_csv_and_excel_export(tmp_path):
         rows = list(csv.DictReader(handle))
     assert len(rows) == 2
     assert {row["company"] for row in rows} == {"istikbal", "bellona"}
+    istikbal = next(row for row in rows if row["company"] == "istikbal")
+    assert istikbal["response_hours"] == "6.0"
+    assert istikbal["resolution_hours"] == "48.0"
 
     workbook = load_workbook(xlsx_path, read_only=True)
     sheet = workbook["Şikâyetler"]
