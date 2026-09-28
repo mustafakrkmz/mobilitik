@@ -3,10 +3,12 @@ from __future__ import annotations
 import datetime as dt
 import re
 from typing import Iterable
-from zoneinfo import ZoneInfo
 
 
-ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
+# Türkiye has used UTC+3 year-round since 2016. Mobilitik targets modern
+# Şikayetvar records, so a fixed offset avoids depending on an external IANA
+# timezone database that is not guaranteed to exist on Windows Python installs.
+ISTANBUL_TZ = dt.timezone(dt.timedelta(hours=3))
 
 TURKISH_MONTHS = {
     "Ocak": 1,
@@ -45,9 +47,9 @@ def parse_datetime(text: str | None, reference_date: dt.date | None = None) -> d
     """Parse ISO, numeric and Turkish Şikayetvar-style date strings.
 
     A year omitted from a Turkish date is inferred relative to ``reference_date``.
-    Offset-aware ISO timestamps are converted to Europe/Istanbul wall time so
-    they remain comparable with the Turkish local timestamps shown on the site.
-    The parser returns ``None`` instead of guessing when no date is recognizable.
+    Offset-aware ISO timestamps are converted to Türkiye wall time so they remain
+    comparable with the local timestamps shown on the site. The parser returns
+    ``None`` instead of guessing when no date is recognizable.
     """
     if not text:
         return None
