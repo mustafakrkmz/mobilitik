@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from mobilitik.analysis.summary import category_summary
+from mobilitik.analysis.textstats import TextAnalyzer
 from mobilitik.desktop.data import ComplaintRepository
 
 
@@ -41,7 +42,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_TITLE} — Mobilya Şikâyet Analizi")
-        self.resize(1280, 860)
+        self.resize(1280, 900)
 
         self.repo = ComplaintRepository(DB_PATH)
         self.process: QProcess | None = None
@@ -135,6 +136,8 @@ class MainWindow(QMainWindow):
         layout.addLayout(actions)
 
         tabs = QTabWidget()
+        self.tabs = tabs
+
         self.complaints_tab = QWidget()
         complaints_layout = QVBoxLayout(self.complaints_tab)
         self.table = QTableWidget(0, 6)
@@ -173,6 +176,37 @@ class MainWindow(QMainWindow):
             category_header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         analysis_layout.addWidget(self.category_table)
         tabs.addTab(self.analysis_tab, "Kategori Analizi")
+
+        self.word_tab = QWidget()
+        word_layout = QVBoxLayout(self.word_tab)
+        word_info = QLabel(
+            "Seçili firma ve tarih aralığındaki şikâyet metinlerinden en sık kelime ve kelime grupları ile TF-IDF ağırlıklı ifadeler hesaplanır."
+        )
+        word_info.setWordWrap(True)
+        word_info.setStyleSheet("color: #666;")
+        word_layout.addWidget(word_info)
+
+        word_controls = QHBoxLayout()
+        self.ngram_combo = QComboBox()
+        self.ngram_combo.addItem("Tek kelime", 1)
+        self.ngram_combo.addItem("İki kelime", 2)
+        self.ngram_combo.addItem("Üç kelime", 3)
+        self.ngram_combo.currentIndexChanged.connect(self.refresh_word_analysis)
+        word_controls.addWidget(QLabel("İfade uzunluğu"))
+        word_controls.addWidget(self.ngram_combo)
+        word_controls.addStretch()
+        word_layout.addLayout(word_controls)
+
+        self.word_table = QTableWidget(0, 4)
+        self.word_table.setHorizontalHeaderLabels(["İfade", "Sıklık", "TF-IDF", "Belge Sayısı"])
+        self.word_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.word_table.setAlternatingRowColors(True)
+        word_header = self.word_table.horizontalHeader()
+        word_header.setSectionResizeMode(0, QHeaderView.Stretch)
+        for col in range(1, 4):
+            word_header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        word_layout.addWidget(self.word_table)
+        tabs.addTab(self.word_tab, "Kelime Analizi")
 
         layout.addWidget(tabs, 1)
 
@@ -286,13 +320,16 @@ class MainWindow(QMainWindow):
         except sqlite3.Error as exc:
             self.log.append(f"Veritabanı uyarısı: {exc}")
 
-    def refresh_analysis(self):
+    def _filtered_records(self):
         company = self.company_combo.currentText().strip().strip("/")
         start = self.start_date.date().toString("yyyy-MM-dd")
         end = self.end_date.date().toString("yyyy-MM-dd")
+        rows = self.repo.filtered_complaints(company=company, start_date=start, end_date=end)
+        return company, start, end, [dict(row) for row in rows]
+
+    def refresh_analysis(self):
         try:
-            rows = self.repo.filtered_complaints(company=company, start_date=start, end_date=end)
-            records = [dict(row) for row in rows]
+            company, start, end, records = self._filtered_records()
             summary = category_summary(records)
             self.category_table.setRowCount(len(summary))
             for r, item in enumerate(summary):
@@ -308,9 +345,46 @@ class MainWindow(QMainWindow):
                     if c > 0:
                         cell.setTextAlignment(Qt.AlignCenter)
                     self.category_table.setItem(r, c, cell)
+            self.refresh_word_analysis(records=records)
             self.log.append(f"Analiz güncellendi: {company}, {start}–{end}, {len(records)} kayıt.")
         except sqlite3.Error as exc:
             self.log.append(f"Analiz veritabanı uyarısı: {exc}")
+
+    def refresh_word_analysis(self, *_args, records=None):
+        try:
+            if records is None:
+                _company, _start, _end, records = self._filtered_records()
+            documents = [f"{r.get('title') or ''} {r.get('complaint_text') or ''}" for r in records]
+            analyzer = TextAnalyzer(documents)
+            n = int(self.ngram_combo.currentData() or 1)
+            frequencies = dict(analyzer.top_ngrams(n=n, top_k=50))
+            tfidf_rows = analyzer.tfidf(n=n, top_k=50, min_doc_freq=1)
+            tfidf_map = {row.term: row.score for row in tfidf_rows}
+
+            document_counts = {}
+            for term in set(frequencies) | set(tfidf_map):
+                document_counts[term] = sum(
+                    1 for tokens in analyzer.tokenized if term in " ".join(tokens) if n == 1
+                ) if n == 1 else sum(
+                    1 for tokens in analyzer.tokenized if term in __import__('mobilitik.analysis.textstats', fromlist=['ngrams']).ngrams(tokens, n)
+                )
+
+            terms = sorted(frequencies, key=lambda t: frequencies[t], reverse=True)[:50]
+            self.word_table.setRowCount(len(terms))
+            for r, term in enumerate(terms):
+                values = [
+                    term,
+                    frequencies.get(term, 0),
+                    f"{tfidf_map.get(term, 0.0):.2f}",
+                    document_counts.get(term, 0),
+                ]
+                for c, value in enumerate(values):
+                    cell = QTableWidgetItem(str(value))
+                    if c > 0:
+                        cell.setTextAlignment(Qt.AlignCenter)
+                    self.word_table.setItem(r, c, cell)
+        except sqlite3.Error as exc:
+            self.log.append(f"Kelime analizi veritabanı uyarısı: {exc}")
 
     @staticmethod
     def _pct(part: int, total: int) -> str:
