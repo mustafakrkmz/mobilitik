@@ -128,7 +128,12 @@ class ComplaintSpider(scrapy.Spider):
         if self.start_date and self.end_date and self.start_date > self.end_date:
             raise CloseSpider("start_date cannot be after end_date")
 
+    async def start(self):
+        """Yield the initial request using the Scrapy 2.13+ start API."""
+        yield self._listing_request(self.start_page)
+
     def start_requests(self):
+        """Compatibility fallback for Scrapy versions older than 2.13."""
         yield self._listing_request(self.start_page)
 
     def _listing_request(self, page: int):
@@ -197,7 +202,6 @@ class ComplaintSpider(scrapy.Spider):
         )
         response_hours = elapsed_hours(parsed_date, company_response_date)
         if company_response_date is not None and response_hours is None:
-            # Reject impossible event ordering rather than manufacturing a duration.
             company_response_date = None
 
         resolution_text: str | None = None
