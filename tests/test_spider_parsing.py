@@ -82,6 +82,30 @@ def test_parse_listing_keeps_legacy_markup_compatibility():
     assert requests[0].url == "https://www.sikayetvar.com/istikbal/ornek-sikayet"
 
 
+def test_listing_date_filter_skips_only_out_of_range_cards():
+    spider = ComplaintSpider(
+        company="istikbal", start_date="2026-09-28", end_date="2026-09-28", max_pages=1
+    )
+    html = """
+    <html><body>
+      <article class="relative ga-c ga-v">
+        <a href="/istikbal/bugunku-sikayet">Bugünkü şikâyet</a>
+        <span>28 Eylül 16:55</span>
+      </article>
+      <article class="relative ga-c ga-v">
+        <a href="/istikbal/dunku-sikayet">Dünkü şikâyet</a>
+        <span>27 Eylül 16:55</span>
+      </article>
+    </body></html>
+    """
+    response = _response(
+        "https://www.sikayetvar.com/istikbal?page=1", html, {"page_num": 1}
+    )
+    requests = list(spider.parse_listing(response))
+    assert len(requests) == 1
+    assert requests[0].url.endswith("/bugunku-sikayet")
+
+
 def test_parse_complaint_extracts_core_fields_and_timing():
     spider = ComplaintSpider(company="istikbal")
     html = """
@@ -124,6 +148,29 @@ def test_parse_complaint_extracts_core_fields_and_timing():
     assert item["resolution_date"] == "2026-01-02 18:24:00"
     assert item["resolution_hours"] == 48.0
     assert "teşekkür" in item["resolution_text"]
+
+
+def test_out_of_range_detail_is_skipped_without_closing_spider():
+    spider = ComplaintSpider(
+        company="istikbal", start_date="2026-09-28", end_date="2026-09-28"
+    )
+    html = """
+    <html><body>
+      <div class="post-time"><div>27 Eylül 2026 18:24</div></div>
+      <h1 class="complaint-detail-title">Eski şikâyet</h1>
+      <div class="complaint-detail-description">Bu kayıt aralık dışında.</div>
+    </body></html>
+    """
+    response = _response(
+        "https://www.sikayetvar.com/istikbal/eski-sikayet",
+        html,
+        {
+            "ref_url": "https://www.sikayetvar.com/istikbal/eski-sikayet",
+            "listing_page": 1,
+            "listing_resolved": False,
+        },
+    )
+    assert list(spider.parse_complaint(response)) == []
 
 
 def test_detail_can_fall_back_to_listing_title_and_date():
