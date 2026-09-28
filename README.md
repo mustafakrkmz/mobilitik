@@ -14,7 +14,9 @@ Mobilya sektöründeki tüketici şikâyetlerini akademik araştırma amacıyla 
 4. **`install_windows.bat`** dosyasına çift tıklayın.
 5. Kurulum bittiğinde masaüstündeki **Mobilitik** kısayolunu açın.
 
-Kurucu sanal Python ortamını, gerekli paketleri ve Playwright Chromium'u otomatik hazırlar. Python bulunamazsa ve Windows Package Manager (`winget`) varsa Python 3.12 kurulumunu da başlatabilir.
+Kurucu sanal Python ortamını, gerekli temel paketleri ve Playwright Chromium'u otomatik hazırlar. Python bulunamazsa ve Windows Package Manager (`winget`) varsa Python 3.12 kurulumunu da başlatabilir.
+
+**BERTurk/PyTorch bileşenleri temel kurulumun parçası değildir.** Bunlar yalnızca `NLP / Duygu Analizi` sekmesindeki **NLP Bileşenlerini Kur / Güncelle** düğmesi kullanılırsa kurulur. Böylece NLP'yi hiç kullanmayan bir Mobilitik kurulumu gereksiz yere ağırlaşmaz.
 
 Ayrıntılı Türkçe yönerge: **[WINDOWS_KURULUM.md](WINDOWS_KURULUM.md)**
 
@@ -37,9 +39,11 @@ python -m mobilitik.desktop
 
 Arayüz üzerinden:
 
-- firma seçilebilir veya Şikayetvar firma slug'ı elle yazılabilir,
+- firma slug'ı veya doğrudan Şikayetvar firma **kök URL'si** girilebilir,
+- örneğin `cilek-mobilya` ile `https://www.sikayetvar.com/cilek-mobilya` aynı firma olarak kabul edilir,
+- kategori veya tekil şikâyet gibi kökten daha derin URL'ler bilinçli olarak reddedilir,
 - başlangıç ve bitiş tarihi seçilebilir,
-- **Filtreyi Uygula ve Analiz Et** ile şikâyet listesi ve bütün analiz sekmeleri aynı firma/tarih filtresine göre yenilenir,
+- **Filtreyi Uygula ve Analiz Et** ile şikâyet listesi ve temel analiz sekmeleri aynı firma/tarih filtresine göre yenilenir,
 - taranacak maksimum sayfa sayısı belirlenebilir,
 - veri toplama başlatılıp durdurulabilir,
 - şikâyet başlığı veya URL bağlantısı üzerine gelindiğinde tam şikâyet metni araç ipucu olarak görülebilir,
@@ -54,7 +58,87 @@ Arayüz üzerinden:
 - `-ıyor/-iyor/-uyor/-üyor` biçimindeki fiiller yaklaşık gövde bazında analiz edilebilir ve aranabilir,
 - her şikâyet kategorisini diğerlerinden ayıran kelime/n-gram ifadeleri incelenebilir,
 - kategori adları ve kategoriye ait anahtar kelime/ifadeler kullanıcı tarafından elle düzenlenebilir,
+- isteğe bağlı BERTurk duygu analizi ve aspect sentiment çalıştırılabilir,
+- kümülatif kategori negatifliği ile gelişim öncelikleri kullanıcı ağırlıklarıyla hesaplanabilir,
 - veriler CSV veya Excel olarak dışa aktarılabilir.
+
+## İsteğe bağlı NLP / Duygu Analizi
+
+`NLP / Duygu Analizi` sekmesi **otomatik çalışmaz**. Normal veri toplama veya temel analiz sırasında model yüklenmez. NLP yalnızca kullanıcı **Duygu Analizini Başlat** düğmesine bastığında çalışır.
+
+Varsayılan model:
+
+```text
+incidelen/bert-base-turkish-sentiment-analysis-cased
+```
+
+Bu model BERTurk tabanlı, Türkçe e-ticaret yorumlarında `Negative / Neutral / Positive` sınıfları için fine-tune edilmiş hazır bir başlangıç modelidir. Mobilitik sonuçları Türkçe olarak `Negatif / Nötr / Pozitif` gösterir.
+
+İlk kullanım akışı:
+
+1. `NLP Bileşenlerini Kur / Güncelle` düğmesine basılır.
+2. CPU-only PyTorch resmi CPU wheel kaynağından, ardından Transformers kurulur.
+3. `Duygu Analizini Başlat` düğmesine basılır.
+4. Model ilk analizde Hugging Face önbelleğine indirilir.
+5. Sonraki çalışmalarda aynı model yeniden indirilmez.
+
+### Önbellek ve tekrarlanabilirlik
+
+Duygu sonuçları ana `complaints` tablosuna gömülmez. Ayrı ve sürümlenmiş tablolarda saklanır:
+
+- `sentiment_results`
+- `aspect_sentiment`
+
+Önbellek anahtarı şu mantığa dayanır:
+
+- şikâyet kimliği,
+- model kimliği,
+- Mobilitik analiz sürümü,
+- başlık + metin SHA-256 özeti.
+
+Metin ve model değişmediyse aynı şikâyet ikinci kez BERT'ten geçirilmez. Model veya analiz mantığı değiştirilirse eski sonuçlar silinmeden yeni sürüm ayrıca üretilebilir.
+
+### Tekil duygu analizi
+
+Her şikâyet için:
+
+- baskın duygu sınıfı,
+- sınıf güveni,
+- negatif olasılığı,
+- nötr olasılığı,
+- pozitif olasılığı
+
+saklanır ve tabloda gösterilir.
+
+### Aspect sentiment
+
+Şikâyet metni cümlelere ayrılır. Her cümle Mobilitik'in **manuel kategori kuralları** ile eşleştirilir; ardından cümle duygu skoru ilgili kategoriye yazılır. Böylece aynı şikâyette örneğin `Ürün/Kalite` olumlu, `Teslimat` çok negatif olabilir.
+
+Bu yöntem tam denetimli bir Türkçe ABSA modeli değildir; mevcut manuel kategori kod kitabını BERT duygu skorlarıyla birleştiren, açıklanabilir bir ilk aspect-sentiment katmanıdır.
+
+### Kümülatif gelişim öncelikleri
+
+Kategori tablosunda şu metrikler birlikte gösterilir:
+
+- kategori şikâyet sayısı ve toplam içindeki payı,
+- ortalama negatiflik,
+- `%70+` negatiflik taşıyan yüksek-negatif şikâyet oranı,
+- çözülmeme oranı,
+- mevcutsa ortalama firma yanıt süresi.
+
+Mobilitik ayrıca karar desteği için `0–100` arası **Öncelik** göstergesi hesaplar. Varsayılan ağırlıklar:
+
+```text
+Sıklık      %40
+Negatiflik  %35
+Çözülmeme   %25
+```
+
+Bu ağırlıklar arayüzden değiştirilebilir. Öncelik puanı akademik bir kalite puanı olarak değil, hangi problem alanlarının birlikte sık + negatif + çözümsüz olduğunu görünür kılan şeffaf bir karar-destek göstergesi olarak kullanılmalıdır.
+
+### Akademik kullanım uyarısı
+
+Hazır BERTurk sentiment modeli e-ticaret yorumlarında eğitilmiştir; Şikayetvar mobilya şikâyetleri farklı bir domain'dir. Bu nedenle makalede modelin kaynak veri setindeki başarısı Mobilitik verisine doğrudan mal edilmemelidir. Araştırma kullanımında ayrı bir manuel doğrulama örneklemi üzerinde confusion matrix, accuracy, precision, recall ve macro-F1 raporlanması planlanmaktadır.
 
 ## Yanıt ve çözüm süreleri
 
@@ -123,7 +207,13 @@ Bu katman özellikle `teslimat tarihi`, `servis kaydı`, `koltuk kumaşı`, `mek
 
 GitHub Actions üzerinde Linux ve Windows testleri çalışır. CI minimum coverage eşiği **%85**'tir. Gerçek `install_windows.bat` dosyası GitHub'ın Windows runner'ında çalıştırılır ve masaüstü smoke testleri aynı Windows ortamında yürütülür.
 
-Test kapsamı şunları içerir:
+NLP testleri CI'da gerçek model ağırlığını indirmez. Bunun yerine kontrollü sahte model çıktısı kullanılarak şu zincir doğrulanır:
+
+`şikâyet → duygu skorları → sürümlü cache → cümle/kategori aspect sentiment → kümülatif öncelik tablosu → PySide6 NLP sekmesi`.
+
+Bu yaklaşım uygulama mantığını hızlı ve tekrarlanabilir biçimde test eder; gerçek modelin domain doğruluğu için ayrıca manuel doğrulama çalışması gerekir.
+
+Test kapsamı ayrıca şunları içerir:
 
 - Türkçe ve ISO tarih ayrıştırma,
 - yanıt/çözüm sürelerinin hesaplanması ve negatif sürelerin reddedilmesi,
@@ -136,12 +226,14 @@ Test kapsamı şunları içerir:
 - yaklaşık şimdiki-zaman fiil gövdesi analizi,
 - SQLite pipeline insert/update ve eski veritabanı şema migrasyonu,
 - veritabanı firma/tarih filtreleri,
+- firma slug'ı ve Şikayetvar kök URL'si normalizasyonu,
 - CSV ve Excel dışa aktarma,
 - örnek Şikayetvar HTML'i üzerinden liste/detay parser davranışı,
 - masaüstü arayüzünün headless ortamda açılması,
 - firma/tarih filtresinin şikâyet satırlarını gerçekten değiştirmesi,
 - kategori filtresi, tıklanabilir URL, hover şikâyet metni ve fiil filtresi,
-- masaüstü arayüzünün scraper komutunu doğru kurması ve Başlat/Durdur akışı.
+- masaüstü arayüzünün scraper komutunu doğru kurması ve Başlat/Durdur akışı,
+- NLP skor normalizasyonu, cache, aspect sentiment, kullanıcı ağırlıklı öncelik ve opt-in GUI akışı.
 
 ## Komut satırı kullanımı
 
@@ -164,6 +256,8 @@ Veriler varsayılan olarak `mobilitik.db` dosyasındaki `complaints` tablosuna y
 
 ## Veri alanları
 
+Ana şikâyet tablosu:
+
 - `company`
 - `complaint_url`
 - `complaint_date`
@@ -180,6 +274,8 @@ Veriler varsayılan olarak `mobilitik.db` dosyasındaki `complaints` tablosuna y
 - `listing_page`
 - `scraped_at`
 
+NLP sonuçları ayrı `sentiment_results` ve `aspect_sentiment` tablolarında sürümlü olarak tutulur.
+
 ## Notlar
 
 - `ROBOTSTXT_OBEY = True` ve düşük istek eşzamanlılığı varsayılan olarak etkindir.
@@ -188,10 +284,15 @@ Veriler varsayılan olarak `mobilitik.db` dosyasındaki `complaints` tablosuna y
 - Yanıt/çözüm tarihleri yalnızca açıkça yayınlandığında kullanılır.
 - Tarihte yıl görünmediğinde mevcut yıl körlemesine atanmaz; yıl geçişlerinde geçmiş tarih olasılığı dikkate alınır.
 - Otomatik testler uygulama mantığını ve örnek HTML parser davranışını doğrular; harici sitenin gelecekteki DOM değişikliklerini garanti edemez.
+- BERTurk sonuçları hazır model çıktısıdır; mobilya şikâyeti domain'inde manuel doğrulama yapılmadan nihai akademik etiket gibi sunulmamalıdır.
 
 ## Yol haritası
 
-1. Manuel kategori sözlüğünü gerçek mobilya şikâyetleriyle kalibre etme
-2. Firma karşılaştırmalı grafikler ve zaman serileri
-3. Analiz sonuçlarını filtreli Excel/rapor olarak dışa aktarma
-4. Python gerektirmeyen bağımsız Windows paketleme seçeneğini geliştirme
+1. NLP için 300–500 kayıtlık manuel doğrulama örneklemi ve macro-F1 değerlendirmesi
+2. Semantik embedding + benzer şikâyetler + problem kümeleme
+3. Aylık trend ve anomali tespiti
+4. Ürün/ürün grubu çıkarımı ve kategori × ürün analizi
+5. Firma yanıtı öncesi/sonrası duygu değişimi
+6. Firma karşılaştırmalı grafikler ve zaman serileri
+7. Analiz sonuçlarını filtreli Excel/rapor olarak dışa aktarma
+8. Python gerektirmeyen bağımsız Windows paketleme seçeneğini geliştirme
