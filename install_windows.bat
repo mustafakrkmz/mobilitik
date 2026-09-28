@@ -8,22 +8,20 @@ echo           Mobilitik Kurulumu
 echo ========================================
 echo.
 
-set "PY_CMD="
+set "PY_EXE="
 where py >nul 2>nul
 if not errorlevel 1 (
-    py -3.12 -c "import sys; print(sys.version)" >nul 2>nul
-    if not errorlevel 1 set "PY_CMD=py -3.12"
+    for /f "delims=" %%P in ('py -3.12 -c "import sys; print(sys.executable)" 2^>nul') do set "PY_EXE=%%P"
 )
 
-if not defined PY_CMD (
+if not defined PY_EXE (
     where python >nul 2>nul
     if not errorlevel 1 (
-        python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul
-        if not errorlevel 1 set "PY_CMD=python"
+        for /f "delims=" %%P in ('python -c "import sys; assert sys.version_info ^>= (3,10); print(sys.executable)" 2^>nul') do set "PY_EXE=%%P"
     )
 )
 
-if not defined PY_CMD (
+if not defined PY_EXE (
     echo Python 3.10+ bulunamadi.
     if /I "%CI%"=="true" exit /b 1
     where winget >nul 2>nul
@@ -40,12 +38,28 @@ if not defined PY_CMD (
         pause
         exit /b 1
     )
-    set "PY_CMD=py -3.12"
+
+    if exist "%LocalAppData%\Programs\Python\Python312\python.exe" (
+        set "PY_EXE=%LocalAppData%\Programs\Python\Python312\python.exe"
+    ) else (
+        where py >nul 2>nul
+        if not errorlevel 1 (
+            for /f "delims=" %%P in ('py -3.12 -c "import sys; print(sys.executable)" 2^>nul') do set "PY_EXE=%%P"
+        )
+    )
 )
 
+if not defined PY_EXE (
+    echo Python kuruldu ancak calistirilabilir dosya bulunamadi.
+    echo Windows'u yeniden baslatip install_windows.bat dosyasini tekrar calistirin.
+    pause
+    exit /b 1
+)
+
+echo Kullanilan Python: %PY_EXE%
 echo [1/4] Sanal ortam hazirlaniyor...
 if not exist ".venv\Scripts\python.exe" (
-    %PY_CMD% -m venv .venv
+    "%PY_EXE%" -m venv .venv
     if errorlevel 1 goto :error
 )
 
