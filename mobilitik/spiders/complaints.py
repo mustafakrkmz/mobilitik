@@ -87,6 +87,7 @@ class ComplaintSpider(scrapy.Spider):
         "AUTOTHROTTLE_START_DELAY": 1.5,
         "AUTOTHROTTLE_MAX_DELAY": 10,
         "ROBOTSTXT_OBEY": True,
+        "HTTPERROR_ALLOWED_CODES": [403, 429],
         "USER_AGENT": "Mobilitik academic research crawler/0.1",
         "DOWNLOAD_HANDLERS": {
             "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
@@ -145,6 +146,22 @@ class ComplaintSpider(scrapy.Spider):
     def parse_listing(self, response):
         page_num = response.meta["page_num"]
 
+        if response.status in (403, 429):
+            self.logger.error(
+                "Şikayetvar erişimi HTTP %s ile engelledi. Bu bir veri-yok durumu değildir; "
+                "site erişim kısıtı/Cloudflare olabilir. Mobilitik korumayı aşmaya çalışmaz.",
+                response.status,
+            )
+            raise CloseSpider("site_access_blocked")
+
+        page_text = " ".join(response.css("body ::text").getall()).lower()
+        if "just a moment" in page_text or "checking your browser" in page_text:
+            self.logger.error(
+                "Şikayetvar bir tarayıcı doğrulama/Cloudflare sayfası döndürdü. "
+                "Mobilitik bu korumayı aşmaya çalışmaz."
+            )
+            raise CloseSpider("site_access_challenge")
+
         # Current Şikayetvar markup (Sep 2026) uses Tailwind-style classes on
         # complaint articles. Keep the older selector as a compatibility fallback.
         cards = response.css("article.ga-c.ga-v")
@@ -152,7 +169,11 @@ class ComplaintSpider(scrapy.Spider):
             cards = response.css("article.card-v2.ga-v.ga-c")
 
         if not cards:
-            self.logger.info("No complaint cards found on page %s; stopping.", page_num)
+            self.logger.error(
+                "Sayfa açıldı ancak şikâyet kartı bulunamadı (sayfa %s). "
+                "Şikayetvar HTML yapısı değişmiş olabilir.",
+                page_num,
+            )
             return
 
         detail_requests = 0
@@ -166,7 +187,8 @@ class ComplaintSpider(scrapy.Spider):
 
             title_parts = card.css("h2.complaint-title a::text").getall()
             if not title_parts:
-                first_link = card.css("a")[0] if card.css("a") else None
+                links = card.css("a")
+                first_link = links[0] if links else None
                 listing_title = _normalized_text(first_link) if first_link is not None else None
             else:
                 listing_title = " ".join(p.strip() for p in title_parts if p.strip()) or None
@@ -198,6 +220,10 @@ class ComplaintSpider(scrapy.Spider):
         yield self._listing_request(page_num + 1)
 
     def parse_complaint(self, response):
+        if response.status in (403, 429):
+            self.logger.warning("Şikâyet detayına erişilemedi (HTTP %s): %s", response.status, response.url)
+            return
+
         date_text = response.css("div.post-time div::text").get()
         parsed_date = parse_sikayetvar_date(date_text) if date_text else None
         if parsed_date is None:
