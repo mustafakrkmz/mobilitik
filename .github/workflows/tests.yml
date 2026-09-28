@@ -67,6 +67,38 @@ jobs:
         run: pip install -r requirements.txt
       - name: Install Playwright Chromium
         run: python -m playwright install --with-deps chromium
+      - name: Inspect current public complaint DOM
+        run: |
+          python - <<'PY'
+          from playwright.sync_api import sync_playwright
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True)
+              page = browser.new_page()
+              page.goto('https://www.sikayetvar.com/istikbal?page=1', wait_until='domcontentloaded', timeout=60000)
+              page.wait_for_timeout(2500)
+              print('TITLE:', page.title())
+              print('ARTICLE_COUNT:', page.locator('article').count())
+              for i in range(min(page.locator('article').count(), 12)):
+                  node = page.locator('article').nth(i)
+                  print('ARTICLE', i, 'CLASS=', node.get_attribute('class'))
+                  print('TEXT=', ' '.join(node.inner_text().split())[:280])
+                  links = node.locator('a')
+                  for j in range(min(links.count(), 4)):
+                      print('  LINK', j, links.nth(j).get_attribute('href'), '::', ' '.join(links.nth(j).inner_text().split())[:140])
+              print('H2_COUNT:', page.locator('h2').count())
+              for i in range(min(page.locator('h2').count(), 20)):
+                  node = page.locator('h2').nth(i)
+                  link = node.locator('a').first
+                  href = link.get_attribute('href') if link.count() else None
+                  print('H2', i, 'CLASS=', node.get_attribute('class'), 'HREF=', href, 'TEXT=', ' '.join(node.inner_text().split())[:180])
+              candidates = page.locator('a[href^="/istikbal/"]')
+              print('ISTIKBAL_LINK_COUNT:', candidates.count())
+              for i in range(min(candidates.count(), 40)):
+                  node = candidates.nth(i)
+                  print('CANDIDATE', i, node.get_attribute('href'), 'CLASS=', node.get_attribute('class'), 'TEXT=', ' '.join(node.inner_text().split())[:180])
+              browser.close()
+          PY
       - name: Crawl one public listing page
         run: |
           rm -f mobilitik.db
@@ -75,7 +107,6 @@ jobs:
         run: |
           python - <<'PY'
           import sqlite3
-          import sys
 
           with sqlite3.connect('mobilitik.db') as conn:
               count = conn.execute('SELECT COUNT(*) FROM complaints').fetchone()[0]
