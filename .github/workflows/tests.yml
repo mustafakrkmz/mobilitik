@@ -19,5 +19,5 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
-      - name: Run tests
-        run: pytest -q
+      - name: Run tests with coverage
+        run: pytest -q --cov=mobilitik --cov-report=term-missing --cov-fail-under=70
