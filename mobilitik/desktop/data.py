@@ -4,6 +4,8 @@ import csv
 import sqlite3
 from pathlib import Path
 
+from mobilitik.timing import median
+
 
 COLUMNS = [
     "id",
@@ -15,9 +17,22 @@ COLUMNS = [
     "resolved",
     "company_responded",
     "company_response_text",
+    "company_response_date",
+    "response_hours",
+    "resolution_text",
+    "resolution_date",
+    "resolution_hours",
     "listing_page",
     "scraped_at",
 ]
+
+TIMING_COLUMNS = {
+    "company_response_date": "TEXT",
+    "response_hours": "REAL",
+    "resolution_text": "TEXT",
+    "resolution_date": "TEXT",
+    "resolution_hours": "REAL",
+}
 
 
 class ComplaintRepository:
@@ -44,24 +59,45 @@ class ComplaintRepository:
                     resolved INTEGER NOT NULL DEFAULT 0,
                     company_responded INTEGER NOT NULL DEFAULT 0,
                     company_response_text TEXT,
+                    company_response_date TEXT,
+                    response_hours REAL,
+                    resolution_text TEXT,
+                    resolution_date TEXT,
+                    resolution_hours REAL,
                     listing_page INTEGER,
                     scraped_at TEXT NOT NULL
                 )
                 """
             )
+            existing = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(complaints)").fetchall()
+            }
+            for column, sql_type in TIMING_COLUMNS.items():
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE complaints ADD COLUMN {column} {sql_type}")
+
+    @staticmethod
+    def _metrics_from_rows(rows):
+        rows = list(rows)
+        total = len(rows)
+        return {
+            "total": total,
+            "resolved": sum(int(bool(row["resolved"])) for row in rows),
+            "responded": sum(int(bool(row["company_responded"])) for row in rows),
+            "timed_responses": sum(row["response_hours"] is not None for row in rows),
+            "timed_resolutions": sum(row["resolution_hours"] is not None for row in rows),
+            "median_response_hours": median(row["response_hours"] for row in rows),
+            "median_resolution_hours": median(row["resolution_hours"] for row in rows),
+        }
 
     def metrics(self):
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT
-                    COUNT(*) AS total,
-                    COALESCE(SUM(resolved), 0) AS resolved,
-                    COALESCE(SUM(company_responded), 0) AS responded
-                FROM complaints
-                """
-            ).fetchone()
-        return dict(row)
+        return self._metrics_from_rows(self.all_complaints())
+
+    def filtered_metrics(self, company: str | None = None, start_date: str | None = None, end_date: str | None = None):
+        return self._metrics_from_rows(
+            self.filtered_complaints(company=company, start_date=start_date, end_date=end_date)
+        )
 
     def list_complaints(self, limit: int = 500):
         with self._connect() as conn:
