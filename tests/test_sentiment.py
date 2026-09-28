@@ -1,7 +1,9 @@
 import pytest
 
+from mobilitik.analysis.classifier import get_category_rules, set_category_rules
 from mobilitik.analysis.sentiment import (
     aggregate_aspect_sentiment,
+    aspect_fingerprint,
     aspect_sentence_map,
     priority_score,
     scores_from_pipeline_output,
@@ -43,6 +45,20 @@ def test_fingerprint_changes_with_text():
     second = text_fingerprint("Başlık", "Başka metin")
     assert first != second
     assert len(first) == 64
+
+
+def test_aspect_fingerprint_changes_when_manual_rules_change():
+    original = get_category_rules()
+    before = aspect_fingerprint("Teslimat", "Ürün gelmedi.")
+    try:
+        changed = {name: dict(terms) for name, terms in original.items()}
+        changed["Test Kategorisi"] = {"gelmedi": 2.0}
+        set_category_rules(changed, persist=False)
+        after = aspect_fingerprint("Teslimat", "Ürün gelmedi.")
+        assert after != before
+        assert text_fingerprint("Teslimat", "Ürün gelmedi.") == text_fingerprint("Teslimat", "Ürün gelmedi.")
+    finally:
+        set_category_rules(original, persist=False)
 
 
 def test_sentence_split_and_manual_aspect_mapping():
