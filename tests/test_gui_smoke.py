@@ -17,8 +17,10 @@ def _seed(db_path):
             INSERT INTO complaints (
                 company, complaint_url, complaint_date, title, complaint_text,
                 resolved, company_responded, company_response_text,
+                company_response_date, response_hours,
+                resolution_text, resolution_date, resolution_hours,
                 listing_page, scraped_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -29,7 +31,12 @@ def _seed(db_path):
                     "Teslimat tarihi ertelendi ve kargo gelmedi.",
                     1,
                     1,
+                    "İlgileniyoruz",
+                    "2026-03-01 16:00:00",
+                    6.0,
                     "Sorun çözüldü",
+                    "2026-03-03 10:00:00",
+                    48.0,
                     1,
                     "2026-03-01T11:00:00",
                 ),
@@ -42,6 +49,11 @@ def _seed(db_path):
                     0,
                     1,
                     "Servis yönlendirildi",
+                    "2026-04-01 22:00:00",
+                    12.0,
+                    None,
+                    None,
+                    None,
                     1,
                     "2026-04-01T11:00:00",
                 ),
@@ -71,6 +83,10 @@ def test_main_window_runs_analysis_headlessly(monkeypatch, tmp_path):
         assert window.total_card[1].text() == "2"
         assert window.resolved_card[1].text() == "%50.0"
         assert window.response_card[1].text() == "%100.0"
+        assert window.response_time_card[1].text() == "9.0 sa"
+        assert window.resolution_time_card[1].text() == "2.0 gün"
+        assert window.table.columnCount() == 8
+        assert window.category_table.columnCount() == 7
         assert window.category_table.rowCount() >= 2
         assert window.word_table.rowCount() > 0
         assert window.distinctive_category_combo.count() >= 2
