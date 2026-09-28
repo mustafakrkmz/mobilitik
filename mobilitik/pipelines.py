@@ -14,7 +14,7 @@ TIMING_COLUMNS = {
 
 
 class SQLitePipeline:
-    def open_spider(self, spider):
+    def open_spider(self, spider=None):
         db_path = Path("mobilitik.db")
         self.conn = sqlite3.connect(db_path)
         self.conn.execute(
@@ -51,7 +51,7 @@ class SQLitePipeline:
             if column not in existing:
                 self.conn.execute(f"ALTER TABLE complaints ADD COLUMN {column} {sql_type}")
 
-    def process_item(self, item, spider):
+    def process_item(self, item, spider=None):
         self.conn.execute(
             """
             INSERT INTO complaints (
@@ -107,5 +107,5 @@ class SQLitePipeline:
         self.conn.commit()
         return item
 
-    def close_spider(self, spider):
+    def close_spider(self, spider=None):
         self.conn.close()
