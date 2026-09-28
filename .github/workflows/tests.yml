@@ -24,4 +24,4 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
       - name: Run tests with coverage
-        run: pytest -q --cov=mobilitik --cov-report=term-missing --cov-fail-under=70
+        run: pytest -q --cov=mobilitik --cov-report=term-missing --cov-fail-under=85
