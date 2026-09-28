@@ -1,3 +1,5 @@
+import asyncio
+
 from scrapy import Request
 from scrapy.http import HtmlResponse
 
@@ -12,6 +14,20 @@ def _response(url: str, html: str, meta=None):
         body=html.encode("utf-8"),
         encoding="utf-8",
     )
+
+
+async def _collect_start(spider):
+    return [item async for item in spider.start()]
+
+
+def test_start_yields_initial_listing_request():
+    spider = ComplaintSpider(company="istikbal", start_page=2)
+    requests = asyncio.run(_collect_start(spider))
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.url == "https://www.sikayetvar.com/istikbal?page=2"
+    assert request.meta["page_num"] == 2
+    assert request.meta["playwright"] is True
 
 
 def test_parse_listing_extracts_detail_url_and_resolved_state():
