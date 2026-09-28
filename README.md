@@ -39,16 +39,21 @@ Arayüz üzerinden:
 
 - firma seçilebilir veya Şikayetvar firma slug'ı elle yazılabilir,
 - başlangıç ve bitiş tarihi seçilebilir,
+- **Filtreyi Uygula ve Analiz Et** ile şikâyet listesi ve bütün analiz sekmeleri aynı firma/tarih filtresine göre yenilenir,
 - taranacak maksimum sayfa sayısı belirlenebilir,
 - veri toplama başlatılıp durdurulabilir,
-- toplanan kayıtlar yerel tabloda görüntülenebilir,
+- şikâyet başlığı veya URL bağlantısı üzerine gelindiğinde tam şikâyet metni araç ipucu olarak görülebilir,
+- URL sütunundan kaynak şikâyet sayfası doğrudan açılabilir,
 - seçili firma ve dönem için toplam şikâyet, çözülme oranı ve firma yanıt oranı görülebilir,
 - açık tarih verisi varsa medyan firma yanıt süresi ve medyan çözüm süresi hesaplanabilir,
 - kategori bazında yanıt ve çözüm süreleri karşılaştırılabilir,
 - kategori analizi yapılabilir,
-- tek kelime, bigram ve trigram sıklıkları incelenebilir,
+- şikâyetler kategoriye göre filtrelenebilir; **Tümü** seçeneği bütün kategorileri birlikte gösterir,
+- tek kelime, bigram ve trigram sıklıkları Türkçe karakterler korunarak incelenebilir,
 - TF-IDF ağırlıkları ve belge sıklıkları görüntülenebilir,
+- `-ıyor/-iyor/-uyor/-üyor` biçimindeki fiiller yaklaşık gövde bazında analiz edilebilir ve aranabilir,
 - her şikâyet kategorisini diğerlerinden ayıran kelime/n-gram ifadeleri incelenebilir,
+- kategori adları ve kategoriye ait anahtar kelime/ifadeler kullanıcı tarafından elle düzenlenebilir,
 - veriler CSV veya Excel olarak dışa aktarılabilir.
 
 ## Yanıt ve çözüm süreleri
@@ -62,11 +67,11 @@ Mobilitik süre üretirken muhafazakâr davranır:
 
 Bu yaklaşım, eksik platform verisini araştırma verisi gibi göstermemek için bilinçli olarak seçilmiştir.
 
-## Kategori analizi
+## Kategori analizi ve manuel kategori yönetimi
 
-İlk sınıflandırma motoru ağırlıklı anahtar kelime/ifade eşleşmesine dayanır. Eşleşmeler kelime/ifade sınırlarıyla yapılır; kısa anahtar kelimelerin başka kelimelerin içinde yanlış pozitif üretmesi engellenir. Bir şikâyet birden fazla kategoriye atanabilir.
+Kategoriler **Şikayetvar'dan alınmaz**. Mobilitik, kullanıcı tarafından düzenlenebilen ağırlıklı anahtar kelime/ifade eşleşmesi kullanır. Bir şikâyet birden fazla kategoriye atanabilir.
 
-Başlangıç kategorileri:
+Başlangıç kategorileri yalnızca bir şablondur:
 
 - Teslimat / Lojistik
 - Üretim / Kalite
@@ -76,48 +81,66 @@ Başlangıç kategorileri:
 - Satış / İletişim
 - Diğer
 
-Her kategori için şikâyet sayısı, çözülen şikâyet sayısı, çözülme oranı, firma yanıt oranı ve veri mevcutsa medyan yanıt/çözüm süresi hesaplanır. Kategori sözlüğü gerçek verilerden elde edilen kelime ve n-gram bulgularına göre kalibre edilecektir.
+`Kategori Yönetimi` sekmesinde kategori adı ve ifadeler elle değiştirilebilir. İfade biçimi örneği:
+
+```text
+teslimat=3; teslim edilmedi=4; gecikme=3
+```
+
+Ağırlık yazılmazsa varsayılan değer `2` kullanılır. Kaydedilen kişisel kategori kuralları yerel `mobilitik_categories.json` dosyasında tutulur ve Git tarafından izlenmez.
+
+`Kategori Analizi` tablosundaki **Tümü** satırı seçili dönem içindeki tüm kayıtları tek kez sayar. Kategori satırlarının toplamı daha yüksek olabilir; çünkü bir şikâyet birden fazla kategoriye girebilir.
 
 ## Kelime analizi
 
 Seçili firma ve tarih aralığı için şikâyet başlığı ile tam metin birlikte analiz edilir.
 
-- Türkçe karakterler analiz amacıyla normalize edilir.
+- Türkçe `İ/ı/ş/ğ/ü/ö/ç` karakterleri korunur.
+- Python'un `İ` harfinde oluşturabildiği birleşik Unicode problemi özel olarak ele alınır; örneğin `İstikbal` tek kelime olarak `istikbal` biçiminde kalır.
 - Sık işlev sözcükleri stop-word filtresinden geçirilir.
 - Unigram, bigram ve trigram frekansları hesaplanır.
 - Her ifade için kaç farklı şikâyette görüldüğü hesaplanır.
 - TF-IDF ağırlığı ile yalnızca sık değil, daha ayırt edici ifadeler de öne çıkarılır.
 
-Bu katman özellikle `teslimat tarihi`, `servis kaydı`, `koltuk kumaşı`, `mekanizma arızası` gibi tekrarlayan sorun kalıplarını keşfetmek ve kategori sözlüğünü veriyle geliştirmek için kullanılacaktır.
+Bu katman özellikle `teslimat tarihi`, `servis kaydı`, `koltuk kumaşı`, `mekanizma arızası` gibi tekrarlayan sorun kalıplarını keşfetmek ve kategori sözlüğünü veriyle geliştirmek için kullanılır.
+
+## Fiil analizi
+
+`Fiil Analizi` sekmesi özellikle kullanıcının talep ettiği şimdiki zaman biçimlerine odaklanır:
+
+- `-ıyor`
+- `-iyor`
+- `-uyor`
+- `-üyor`
+
+Örneğin `geliyor`, `bozuluyor`, `çalışıyor` gibi biçimler yakalanır; sıklık, farklı belge sayısı ve görülen çekimli örnekler listelenir. Bu modül tam bir Türkçe biçimbilim çözümleyicisi değildir. Sonuç bu nedenle arayüzde **yaklaşık gövde** olarak adlandırılır; özellikle `bekliyor` gibi ses değişimi içeren biçimlerde kök rekonstrüksiyonu yapılmaz.
 
 ## Kategoriye özgü ifadeler
 
-`Kategori İfadeleri` sekmesi, her kategorideki şikâyetleri diğer kategorilerle karşılaştırır ve o kategori için görece daha ayırt edici olan unigram, bigram veya trigramları sıralar. Böylece önceden tanımlanmamış fakat gerçek veride sık tekrar eden sorun kalıpları kategori sözlüğüne kontrollü biçimde eklenebilir.
+`Kategori İfadeleri` sekmesi, her kategorideki şikâyetleri diğer kategorilerle karşılaştırır ve o kategori için görece daha ayırt edici olan unigram, bigram veya trigramları sıralar. **Tümü** seçeneği seçilen firma ve dönemdeki bütün şikâyetler için genel TF-IDF görünümünü verir.
 
 ## Otomatik testler
 
-GitHub Actions üzerinde Linux ve Windows testleri çalışır. Güncel durumda:
-
-- Linux test paketi: **37 test başarılı**.
-- Toplam kod kapsamı: **%89,78**.
-- CI minimum coverage eşiği: **%85**.
-- Gerçek `install_windows.bat` dosyası GitHub'ın Windows runner'ında başarıyla çalıştırılmıştır.
-- Windows ortamında masaüstü, parser, SQLite, dışa aktarma ve zamanlama smoke testleri başarıyla geçmektedir.
+GitHub Actions üzerinde Linux ve Windows testleri çalışır. CI minimum coverage eşiği **%85**'tir. Gerçek `install_windows.bat` dosyası GitHub'ın Windows runner'ında çalıştırılır ve masaüstü smoke testleri aynı Windows ortamında yürütülür.
 
 Test kapsamı şunları içerir:
 
 - Türkçe ve ISO tarih ayrıştırma,
 - yanıt/çözüm sürelerinin hesaplanması ve negatif sürelerin reddedilmesi,
 - kategori sınıflandırma ve çoklu kategori davranışı,
+- kullanıcı tanımlı kategori kuralı kaydetme/okuma,
 - yanlış alt-kelime eşleşmelerinin engellenmesi,
-- kategori özetleri, çözülme/yanıt oranları ve medyan süreler,
-- unigram/bigram/trigram, belge sıklığı ve TF-IDF,
+- `Tümü` dahil kategori özetleri, çözülme/yanıt oranları ve medyan süreler,
+- Türkçe karakter korumalı unigram/bigram/trigram, belge sıklığı ve TF-IDF,
 - kategoriye özgü ayırt edici ifade analizi,
+- yaklaşık şimdiki-zaman fiil gövdesi analizi,
 - SQLite pipeline insert/update ve eski veritabanı şema migrasyonu,
 - veritabanı firma/tarih filtreleri,
 - CSV ve Excel dışa aktarma,
 - örnek Şikayetvar HTML'i üzerinden liste/detay parser davranışı,
-- masaüstü arayüzünün headless ortamda açılması ve analiz tablolarını doldurması,
+- masaüstü arayüzünün headless ortamda açılması,
+- firma/tarih filtresinin şikâyet satırlarını gerçekten değiştirmesi,
+- kategori filtresi, tıklanabilir URL, hover şikâyet metni ve fiil filtresi,
 - masaüstü arayüzünün scraper komutunu doğru kurması ve Başlat/Durdur akışı.
 
 ## Komut satırı kullanımı
@@ -168,7 +191,7 @@ Veriler varsayılan olarak `mobilitik.db` dosyasındaki `complaints` tablosuna y
 
 ## Yol haritası
 
-1. Kategori sözlüğünü gerçek mobilya şikâyetleriyle kalibre etme
+1. Manuel kategori sözlüğünü gerçek mobilya şikâyetleriyle kalibre etme
 2. Firma karşılaştırmalı grafikler ve zaman serileri
 3. Analiz sonuçlarını filtreli Excel/rapor olarak dışa aktarma
 4. Python gerektirmeyen bağımsız Windows paketleme seçeneğini geliştirme
