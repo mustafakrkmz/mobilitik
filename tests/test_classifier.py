@@ -1,4 +1,11 @@
-from mobilitik.analysis.classifier import classify_text
+import json
+
+from mobilitik.analysis.classifier import (
+    classify_text,
+    parse_rule_terms,
+    reset_category_rules,
+    set_category_rules,
+)
 
 
 def test_delivery_complaint():
@@ -32,3 +39,28 @@ def test_unknown_goes_to_other():
 def test_short_rule_does_not_match_inside_another_word():
     result = classify_text("Buraya kadar süreç normal ilerledi.")
     assert "Aksesuar / Donanım" not in result.categories
+
+
+def test_rule_text_parser_supports_manual_weights_and_defaults():
+    rules = parse_rule_terms("teslimat=3; geç teslim; servis gelmedi=4,5")
+    assert rules["teslimat"] == 3.0
+    assert rules["geç teslim"] == 2.0
+    assert rules["servis gelmedi"] == 4.5
+
+
+def test_manual_categories_can_be_activated_and_persisted(tmp_path):
+    path = tmp_path / "categories.json"
+    custom = {
+        "Benim Teslimat Kategorim": {
+            "geciken sevkiyat": 3.0,
+            "teslim edilmedi": 2.0,
+        }
+    }
+    try:
+        set_category_rules(custom, persist=True, path=path)
+        result = classify_text("Siparişim teslim edilmedi.")
+        assert result.primary_category == "Benim Teslimat Kategorim"
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        assert saved["Benim Teslimat Kategorim"]["geciken sevkiyat"] == 3.0
+    finally:
+        reset_category_rules()
