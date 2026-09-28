@@ -4,6 +4,7 @@ import csv
 import sqlite3
 from pathlib import Path
 
+from mobilitik.company import normalize_company_input
 from mobilitik.timing import median
 
 
@@ -118,7 +119,7 @@ class ComplaintRepository:
 
         if company:
             clauses.append("company = ?")
-            params.append(company)
+            params.append(normalize_company_input(company))
         if start_date:
             clauses.append("date(complaint_date) >= date(?)")
             params.append(start_date)
