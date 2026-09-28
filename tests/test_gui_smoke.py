@@ -73,7 +73,7 @@ def _make_window(monkeypatch, tmp_path):
 def test_main_window_runs_analysis_headlessly(monkeypatch, tmp_path):
     app, window = _make_window(monkeypatch, tmp_path)
     try:
-        window.company_combo.setCurrentText("istikbal")
+        window.company_combo.setCurrentText("https://www.sikayetvar.com/istikbal")
         window.start_date.setDate(QDate(2026, 1, 1))
         window.end_date.setDate(QDate(2026, 12, 31))
         window.refresh_analysis()
@@ -201,7 +201,7 @@ def test_main_window_builds_and_starts_scraper_process(monkeypatch, tmp_path):
     app, window = _make_window(monkeypatch, tmp_path)
     monkeypatch.setattr(app_module, "QProcess", _FakeProcess)
     try:
-        window.company_combo.setCurrentText("istikbal")
+        window.company_combo.setCurrentText("https://www.sikayetvar.com/cilek-mobilya")
         window.start_date.setDate(QDate(2026, 1, 1))
         window.end_date.setDate(QDate(2026, 9, 28))
         window.max_pages.setValue(2)
@@ -209,7 +209,7 @@ def test_main_window_builds_and_starts_scraper_process(monkeypatch, tmp_path):
 
         assert isinstance(window.process, _FakeProcess)
         assert window.process.started is True
-        assert "company=istikbal" in window.process.arguments
+        assert "company=cilek-mobilya" in window.process.arguments
         assert "max_pages=2" in window.process.arguments
         assert window.start_button.isEnabled() is False
         assert window.stop_button.isEnabled() is True
