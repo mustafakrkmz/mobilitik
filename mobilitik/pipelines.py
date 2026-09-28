@@ -4,6 +4,15 @@ import sqlite3
 from pathlib import Path
 
 
+TIMING_COLUMNS = {
+    "company_response_date": "TEXT",
+    "response_hours": "REAL",
+    "resolution_text": "TEXT",
+    "resolution_date": "TEXT",
+    "resolution_hours": "REAL",
+}
+
+
 class SQLitePipeline:
     def open_spider(self, spider):
         db_path = Path("mobilitik.db")
@@ -20,12 +29,27 @@ class SQLitePipeline:
                 resolved INTEGER NOT NULL DEFAULT 0,
                 company_responded INTEGER NOT NULL DEFAULT 0,
                 company_response_text TEXT,
+                company_response_date TEXT,
+                response_hours REAL,
+                resolution_text TEXT,
+                resolution_date TEXT,
+                resolution_hours REAL,
                 listing_page INTEGER,
                 scraped_at TEXT NOT NULL
             )
             """
         )
+        self._ensure_timing_columns()
         self.conn.commit()
+
+    def _ensure_timing_columns(self):
+        existing = {
+            row[1]
+            for row in self.conn.execute("PRAGMA table_info(complaints)").fetchall()
+        }
+        for column, sql_type in TIMING_COLUMNS.items():
+            if column not in existing:
+                self.conn.execute(f"ALTER TABLE complaints ADD COLUMN {column} {sql_type}")
 
     def process_item(self, item, spider):
         self.conn.execute(
@@ -39,9 +63,14 @@ class SQLitePipeline:
                 resolved,
                 company_responded,
                 company_response_text,
+                company_response_date,
+                response_hours,
+                resolution_text,
+                resolution_date,
+                resolution_hours,
                 listing_page,
                 scraped_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(complaint_url) DO UPDATE SET
                 complaint_date = excluded.complaint_date,
                 title = excluded.title,
@@ -49,6 +78,11 @@ class SQLitePipeline:
                 resolved = excluded.resolved,
                 company_responded = excluded.company_responded,
                 company_response_text = excluded.company_response_text,
+                company_response_date = excluded.company_response_date,
+                response_hours = excluded.response_hours,
+                resolution_text = excluded.resolution_text,
+                resolution_date = excluded.resolution_date,
+                resolution_hours = excluded.resolution_hours,
                 listing_page = excluded.listing_page,
                 scraped_at = excluded.scraped_at
             """,
@@ -61,6 +95,11 @@ class SQLitePipeline:
                 int(bool(item.get("resolved"))),
                 int(bool(item.get("company_responded"))),
                 item.get("company_response_text"),
+                item.get("company_response_date"),
+                item.get("response_hours"),
+                item.get("resolution_text"),
+                item.get("resolution_date"),
+                item.get("resolution_hours"),
                 item.get("listing_page"),
                 item.get("scraped_at"),
             ),
