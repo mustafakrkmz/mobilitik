@@ -38,14 +38,21 @@ def test_parse_listing_extracts_detail_url_and_resolved_state():
     assert detail.meta["listing_resolved"] is True
 
 
-def test_parse_complaint_extracts_core_fields_and_company_response():
+def test_parse_complaint_extracts_core_fields_and_timing():
     spider = ComplaintSpider(company="istikbal")
     html = """
     <html><body>
       <div class="post-time"><div>31 Aralık 2025 18:24</div></div>
       <h1 class="complaint-detail-title">Teslimat gecikmesi</h1>
       <div class="complaint-detail-description">Siparişim teslim edilmedi.</div>
-      <div class="brand-answer">Firma tarafından dönüş yapıldı.</div>
+      <div class="brand-answer">
+        <time datetime="2026-01-01T06:24:00">1 Ocak 2026 06:24</time>
+        Firma tarafından dönüş yapıldı.
+      </div>
+      <div class="complaint-solution">
+        <time datetime="2026-01-02T18:24:00">2 Ocak 2026 18:24</time>
+        Sorunum çözüldü, teşekkür ederim.
+      </div>
     </body></html>
     """
     response = _response(
@@ -68,3 +75,34 @@ def test_parse_complaint_extracts_core_fields_and_company_response():
     assert item["resolved"] is True
     assert item["company_responded"] is True
     assert "dönüş yapıldı" in item["company_response_text"]
+    assert item["company_response_date"] == "2026-01-01 06:24:00"
+    assert item["response_hours"] == 12.0
+    assert item["resolution_date"] == "2026-01-02 18:24:00"
+    assert item["resolution_hours"] == 48.0
+    assert "teşekkür" in item["resolution_text"]
+
+
+def test_timing_is_left_empty_when_status_has_no_explicit_date():
+    spider = ComplaintSpider(company="istikbal")
+    html = """
+    <html><body>
+      <div class="post-time"><div>28 Eylül 12:00</div></div>
+      <h1 class="complaint-detail-title">Servis sorunu</h1>
+      <div class="complaint-detail-description">Servis gelmedi.</div>
+      <div class="brand-answer">Firma yanıt verdi ancak tarih görünmüyor.</div>
+      <div class="complaint-solution">Çözüldü</div>
+    </body></html>
+    """
+    response = _response(
+        "https://www.sikayetvar.com/istikbal/tarihsiz",
+        html,
+        {
+            "ref_url": "https://www.sikayetvar.com/istikbal/tarihsiz",
+            "listing_page": 1,
+            "listing_resolved": True,
+        },
+    )
+    item = list(spider.parse_complaint(response))[0]
+    assert item["company_responded"] is True
+    assert item["response_hours"] is None
+    assert item["resolution_hours"] is None
