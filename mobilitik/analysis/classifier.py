@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
 import re
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import Iterable
+from pathlib import Path
+from typing import Iterable, Mapping
 
 
-CATEGORY_RULES: dict[str, dict[str, float]] = {
+CATEGORY_RULES_PATH = Path("mobilitik_categories.json")
+
+DEFAULT_CATEGORY_RULES: dict[str, dict[str, float]] = {
     "Teslimat / Lojistik": {
         "teslimat": 3.0,
         "teslim edilmedi": 4.0,
@@ -80,8 +85,114 @@ CATEGORY_RULES: dict[str, dict[str, float]] = {
 }
 
 
+def _copy_rules(rules: Mapping[str, Mapping[str, float]]) -> dict[str, dict[str, float]]:
+    return {
+        str(category): {str(term): float(weight) for term, weight in terms.items()}
+        for category, terms in rules.items()
+        if str(category).strip()
+    }
+
+
+def _load_rules_file(path: Path) -> dict[str, dict[str, float]] | None:
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        parsed: dict[str, dict[str, float]] = {}
+        for category, terms in data.items():
+            if not isinstance(category, str) or not isinstance(terms, dict):
+                continue
+            parsed_terms: dict[str, float] = {}
+            for term, weight in terms.items():
+                if not isinstance(term, str):
+                    continue
+                try:
+                    parsed_terms[term.strip()] = float(weight)
+                except (TypeError, ValueError):
+                    continue
+            if category.strip() and parsed_terms:
+                parsed[category.strip()] = parsed_terms
+        return parsed or None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+_ACTIVE_RULES = _load_rules_file(CATEGORY_RULES_PATH) or deepcopy(DEFAULT_CATEGORY_RULES)
+
+
+def get_category_rules() -> dict[str, dict[str, float]]:
+    return deepcopy(_ACTIVE_RULES)
+
+
+def set_category_rules(
+    rules: Mapping[str, Mapping[str, float]],
+    *,
+    persist: bool = False,
+    path: Path | None = None,
+) -> dict[str, dict[str, float]]:
+    global _ACTIVE_RULES
+    cleaned = _copy_rules(rules)
+    if not cleaned:
+        raise ValueError("En az bir kategori ve anahtar ifade bulunmalıdır.")
+    _ACTIVE_RULES = cleaned
+    if persist:
+        save_category_rules(cleaned, path=path)
+    return get_category_rules()
+
+
+def save_category_rules(
+    rules: Mapping[str, Mapping[str, float]] | None = None,
+    *,
+    path: Path | None = None,
+) -> Path:
+    destination = Path(path or CATEGORY_RULES_PATH)
+    payload = _copy_rules(rules or _ACTIVE_RULES)
+    destination.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=False),
+        encoding="utf-8",
+    )
+    return destination
+
+
+def reset_category_rules(*, persist: bool = False, path: Path | None = None) -> dict[str, dict[str, float]]:
+    return set_category_rules(DEFAULT_CATEGORY_RULES, persist=persist, path=path)
+
+
+def format_rule_terms(terms: Mapping[str, float]) -> str:
+    """Human-editable ``ifade=ağırlık`` representation used by the GUI."""
+    return "; ".join(f"{term}={weight:g}" for term, weight in terms.items())
+
+
+def parse_rule_terms(value: str, *, default_weight: float = 2.0) -> dict[str, float]:
+    """Parse ``ifade=3; başka ifade=2`` or plain semicolon-separated terms."""
+    result: dict[str, float] = {}
+    for raw_piece in (value or "").split(";"):
+        piece = raw_piece.strip()
+        if not piece:
+            continue
+        if "=" in piece:
+            term, raw_weight = piece.rsplit("=", 1)
+            term = term.strip()
+            try:
+                weight = float(raw_weight.strip().replace(",", "."))
+            except ValueError as exc:
+                raise ValueError(f"Geçersiz ağırlık: {piece}") from exc
+        else:
+            term = piece
+            weight = default_weight
+        if not term:
+            continue
+        if weight <= 0:
+            raise ValueError("Kategori ağırlıkları sıfırdan büyük olmalıdır.")
+        result[term] = weight
+    return result
+
+
 def _normalize(text: str) -> str:
-    text = text.casefold()
+    # Turkish-aware I/İ lower-casing prevents İstikbal -> i + combining-dot issues.
+    text = (text or "").replace("I", "ı").replace("İ", "i").lower()
     text = re.sub(r"[^\wçğıöşü\s]", " ", text, flags=re.UNICODE)
     return " ".join(text.split())
 
@@ -105,17 +216,23 @@ class ClassificationResult:
         return [name for name, score in self.scores.items() if score > 0]
 
 
-def classify_text(text: str, *, threshold: float = 2.0) -> ClassificationResult:
+def classify_text(
+    text: str,
+    *,
+    threshold: float = 2.0,
+    rules: Mapping[str, Mapping[str, float]] | None = None,
+) -> ClassificationResult:
     normalized = _normalize(text or "")
     scores: dict[str, float] = {}
     matched: dict[str, list[str]] = {}
 
-    for category, rules in CATEGORY_RULES.items():
+    active_rules = rules or _ACTIVE_RULES
+    for category, category_rules in active_rules.items():
         score = 0.0
         hits: list[str] = []
-        for phrase, weight in rules.items():
+        for phrase, weight in category_rules.items():
             if _contains_phrase(normalized, phrase):
-                score += weight
+                score += float(weight)
                 hits.append(phrase)
         if score >= threshold:
             scores[category] = round(score, 2)
