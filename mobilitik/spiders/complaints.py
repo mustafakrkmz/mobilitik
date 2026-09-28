@@ -54,13 +54,7 @@ def _normalized_text(selector) -> str | None:
 
 
 def _event_from_containers(response, selectors: tuple[str, ...]) -> tuple[str | None, dt.datetime | None]:
-    """Return the first meaningful event text and an explicit date when present.
-
-    Several selectors are intentionally supported because Şikayetvar has changed
-    its CSS class names over time. A date is only returned when it is explicitly
-    present in the matched event container; no duration is inferred from status
-    alone.
-    """
+    """Return the first meaningful event text and an explicit date when present."""
     fallback_text: str | None = None
     for selector in selectors:
         for node in response.css(selector):
@@ -150,22 +144,40 @@ class ComplaintSpider(scrapy.Spider):
 
     def parse_listing(self, response):
         page_num = response.meta["page_num"]
-        cards = response.css("article.card-v2.ga-v.ga-c")
+
+        # Current Şikayetvar markup (Sep 2026) uses Tailwind-style classes on
+        # complaint articles. Keep the older selector as a compatibility fallback.
+        cards = response.css("article.ga-c.ga-v")
+        if not cards:
+            cards = response.css("article.card-v2.ga-v.ga-c")
 
         if not cards:
             self.logger.info("No complaint cards found on page %s; stopping.", page_num)
             return
 
+        detail_requests = 0
         for card in cards:
-            href = card.css("h2.complaint-title a::attr(href)").get()
-            if not href:
+            href = (
+                card.css("h2.complaint-title a::attr(href)").get()
+                or card.css("a::attr(href)").get()
+            )
+            if not href or not href.startswith(f"/{self.company}/") or href.startswith("/uye/"):
                 continue
+
+            title_parts = card.css("h2.complaint-title a::text").getall()
+            if not title_parts:
+                first_link = card.css("a")[0] if card.css("a") else None
+                listing_title = _normalized_text(first_link) if first_link is not None else None
+            else:
+                listing_title = " ".join(p.strip() for p in title_parts if p.strip()) or None
 
             complaint_url = urljoin("https://www.sikayetvar.com", href)
             card_text = " ".join(card.css("::text").getall())
             normalized_card_text = " ".join(card_text.split())
             listing_resolved = "Çözüldü" in normalized_card_text
+            listing_date = parse_datetime(normalized_card_text)
 
+            detail_requests += 1
             yield scrapy.Request(
                 complaint_url,
                 callback=self.parse_complaint,
@@ -173,8 +185,12 @@ class ComplaintSpider(scrapy.Spider):
                     "ref_url": complaint_url,
                     "listing_page": page_num,
                     "listing_resolved": listing_resolved,
+                    "listing_title": listing_title,
+                    "listing_date": listing_date.isoformat(sep=" ") if listing_date else None,
                 },
             )
+
+        self.logger.info("Page %s: queued %s complaint detail requests.", page_num, detail_requests)
 
         if self.max_pages and page_num >= self.start_page + self.max_pages - 1:
             return
@@ -184,6 +200,8 @@ class ComplaintSpider(scrapy.Spider):
     def parse_complaint(self, response):
         date_text = response.css("div.post-time div::text").get()
         parsed_date = parse_sikayetvar_date(date_text) if date_text else None
+        if parsed_date is None:
+            parsed_date = parse_datetime(response.meta.get("listing_date"))
 
         if self.start_date and parsed_date and parsed_date.date() < self.start_date:
             raise CloseSpider("date range completed")
@@ -193,7 +211,7 @@ class ComplaintSpider(scrapy.Spider):
         title_parts = response.css("h1.complaint-detail-title ::text").getall()
         body_parts = response.css("div.complaint-detail-description ::text").getall()
 
-        title = " ".join(p.strip() for p in title_parts if p.strip()) or None
+        title = " ".join(p.strip() for p in title_parts if p.strip()) or response.meta.get("listing_title")
         complaint_text = " ".join(p.strip() for p in body_parts if p.strip()) or None
         resolved = bool(response.meta.get("listing_resolved"))
 
