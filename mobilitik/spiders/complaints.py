@@ -24,24 +24,38 @@ TURKISH_MONTHS = {
 
 
 def parse_sikayetvar_date(text: str, reference_date: dt.date | None = None) -> dt.datetime | None:
-    """Parse dates such as '28 Eylül 12:10'.
+    """Parse Şikayetvar date strings.
 
-    Şikayetvar listing/detail pages may omit the year. We infer it relative to
-    the crawl date instead of blindly assigning the current year. If the parsed
-    month/day would be implausibly far in the future, the previous year is used.
+    Supported examples:
+    - ``28 Eylül 12:10``
+    - ``31 Aralık 2025 18:24``
+
+    When the year is omitted, infer it relative to the crawl date. If the
+    resulting month/day would lie implausibly far in the future, use the
+    previous year instead.
     """
     reference_date = reference_date or dt.date.today()
     try:
         parts = text.strip().split()
+        if len(parts) not in (3, 4):
+            return None
+
         day = int(parts[0])
         month = TURKISH_MONTHS[parts[1]]
-        hour, minute = map(int, parts[2].split(":"))
 
-        candidate = dt.datetime(reference_date.year, month, day, hour, minute)
-        # Complaints are historical. If a year-less date appears more than
-        # ~1 month in the future, it almost certainly belongs to the prior year.
-        if candidate.date() > reference_date + dt.timedelta(days=31):
+        if len(parts) == 4:
+            year = int(parts[2])
+            time_part = parts[3]
+        else:
+            year = reference_date.year
+            time_part = parts[2]
+
+        hour, minute = map(int, time_part.split(":"))
+        candidate = dt.datetime(year, month, day, hour, minute)
+
+        if len(parts) == 3 and candidate.date() > reference_date + dt.timedelta(days=31):
             candidate = candidate.replace(year=reference_date.year - 1)
+
         return candidate
     except (ValueError, KeyError, IndexError):
         return None
@@ -121,11 +135,20 @@ class ComplaintSpider(scrapy.Spider):
             href = card.css("h2.complaint-title a::attr(href)").get()
             if not href:
                 continue
+
             complaint_url = urljoin("https://www.sikayetvar.com", href)
+            card_text = " ".join(card.css("::text").getall())
+            normalized_card_text = " ".join(card_text.split())
+            listing_resolved = "Çözüldü" in normalized_card_text
+
             yield scrapy.Request(
                 complaint_url,
                 callback=self.parse_complaint,
-                meta={"ref_url": complaint_url, "listing_page": page_num},
+                meta={
+                    "ref_url": complaint_url,
+                    "listing_page": page_num,
+                    "listing_resolved": listing_resolved,
+                },
             )
 
         if self.max_pages and page_num >= self.start_page + self.max_pages - 1:
@@ -148,12 +171,10 @@ class ComplaintSpider(scrapy.Spider):
         title = " ".join(p.strip() for p in title_parts if p.strip()) or None
         complaint_text = " ".join(p.strip() for p in body_parts if p.strip()) or None
 
-        # Selectors below are intentionally conservative. They may need tuning
-        # as Şikayetvar changes its DOM. Raw status text is stored so later
-        # analysis can remain auditable.
-        page_text = " ".join(response.css("body ::text").getall())
-        normalized_page_text = " ".join(page_text.split())
-        resolved = "Çözüldü" in normalized_page_text
+        # The resolved marker is associated with the complaint card on listing
+        # pages. Reading it there avoids false positives caused by unrelated
+        # 'Çözüldü' text elsewhere on a detail page.
+        resolved = bool(response.meta.get("listing_resolved"))
 
         company_response_parts = response.css(
             ".brand-answer ::text, .company-response ::text, .complaint-detail-brand-response ::text"
