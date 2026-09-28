@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mobilitik.analysis.summary import category_summary
 from mobilitik.desktop.data import ComplaintRepository
 
 
@@ -39,7 +41,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_TITLE} — Mobilya Şikâyet Analizi")
-        self.resize(1280, 820)
+        self.resize(1280, 860)
 
         self.repo = ComplaintRepository(DB_PATH)
         self.process: QProcess | None = None
@@ -60,12 +62,12 @@ class MainWindow(QMainWindow):
 
         header = QLabel("Mobilitik")
         header.setStyleSheet("font-size: 28px; font-weight: 700;")
-        subtitle = QLabel("Mobilya sektöründeki tüketici şikâyetlerini topla, incele ve dışa aktar.")
+        subtitle = QLabel("Mobilya sektöründeki tüketici şikâyetlerini topla, sınıflandır ve çözüm performansını incele.")
         subtitle.setStyleSheet("color: #666;")
         layout.addWidget(header)
         layout.addWidget(subtitle)
 
-        controls = QGroupBox("Veri Toplama")
+        controls = QGroupBox("Veri Toplama ve Analiz Filtresi")
         form = QGridLayout(controls)
 
         self.company_combo = QComboBox()
@@ -94,6 +96,9 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_scraping)
 
+        self.analyze_button = QPushButton("Seçili Dönemi Analiz Et")
+        self.analyze_button.clicked.connect(self.refresh_analysis)
+
         form.addWidget(QLabel("Firma"), 0, 0)
         form.addWidget(self.company_combo, 0, 1)
         form.addWidget(QLabel("Başlangıç"), 0, 2)
@@ -102,8 +107,9 @@ class MainWindow(QMainWindow):
         form.addWidget(self.end_date, 0, 5)
         form.addWidget(QLabel("Maks. sayfa"), 0, 6)
         form.addWidget(self.max_pages, 0, 7)
-        form.addWidget(self.start_button, 1, 0, 1, 6)
-        form.addWidget(self.stop_button, 1, 6, 1, 2)
+        form.addWidget(self.start_button, 1, 0, 1, 4)
+        form.addWidget(self.stop_button, 1, 4, 1, 2)
+        form.addWidget(self.analyze_button, 1, 6, 1, 2)
         layout.addWidget(controls)
 
         cards = QHBoxLayout()
@@ -128,6 +134,9 @@ class MainWindow(QMainWindow):
         actions.addStretch()
         layout.addLayout(actions)
 
+        tabs = QTabWidget()
+        self.complaints_tab = QWidget()
+        complaints_layout = QVBoxLayout(self.complaints_tab)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["Tarih", "Firma", "Başlık", "Çözüldü", "Yanıt", "URL"])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -140,7 +149,32 @@ class MainWindow(QMainWindow):
         header_view.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header_view.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         header_view.setSectionResizeMode(5, QHeaderView.Stretch)
-        layout.addWidget(self.table, 1)
+        complaints_layout.addWidget(self.table)
+        tabs.addTab(self.complaints_tab, "Şikâyetler")
+
+        self.analysis_tab = QWidget()
+        analysis_layout = QVBoxLayout(self.analysis_tab)
+        analysis_info = QLabel(
+            "Bir şikâyet birden fazla kategoriye girebilir. Yüzdeler kategori içindeki çözülme ve firma yanıt oranlarını gösterir."
+        )
+        analysis_info.setWordWrap(True)
+        analysis_info.setStyleSheet("color: #666;")
+        analysis_layout.addWidget(analysis_info)
+
+        self.category_table = QTableWidget(0, 5)
+        self.category_table.setHorizontalHeaderLabels(
+            ["Kategori", "Şikâyet", "Çözülen", "Çözülme %", "Firma Yanıt %"]
+        )
+        self.category_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.category_table.setAlternatingRowColors(True)
+        category_header = self.category_table.horizontalHeader()
+        category_header.setSectionResizeMode(0, QHeaderView.Stretch)
+        for col in range(1, 5):
+            category_header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        analysis_layout.addWidget(self.category_table)
+        tabs.addTab(self.analysis_tab, "Kategori Analizi")
+
+        layout.addWidget(tabs, 1)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
@@ -224,6 +258,7 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         self.log.append(f"✓ İşlem tamamlandı. Çıkış kodu: {exit_code}")
         self.refresh_data()
+        self.refresh_analysis()
 
     def refresh_data(self):
         try:
@@ -250,6 +285,32 @@ class MainWindow(QMainWindow):
                     self.table.setItem(r, c, item)
         except sqlite3.Error as exc:
             self.log.append(f"Veritabanı uyarısı: {exc}")
+
+    def refresh_analysis(self):
+        company = self.company_combo.currentText().strip().strip("/")
+        start = self.start_date.date().toString("yyyy-MM-dd")
+        end = self.end_date.date().toString("yyyy-MM-dd")
+        try:
+            rows = self.repo.filtered_complaints(company=company, start_date=start, end_date=end)
+            records = [dict(row) for row in rows]
+            summary = category_summary(records)
+            self.category_table.setRowCount(len(summary))
+            for r, item in enumerate(summary):
+                values = [
+                    item["category"],
+                    item["complaints"],
+                    item["resolved"],
+                    f"%{item['resolved_rate']:.1f}",
+                    f"%{item['response_rate']:.1f}",
+                ]
+                for c, value in enumerate(values):
+                    cell = QTableWidgetItem(str(value))
+                    if c > 0:
+                        cell.setTextAlignment(Qt.AlignCenter)
+                    self.category_table.setItem(r, c, cell)
+            self.log.append(f"Analiz güncellendi: {company}, {start}–{end}, {len(records)} kayıt.")
+        except sqlite3.Error as exc:
+            self.log.append(f"Analiz veritabanı uyarısı: {exc}")
 
     @staticmethod
     def _pct(part: int, total: int) -> str:
