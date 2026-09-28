@@ -21,4 +21,4 @@ def test_progressive_verb_stats_counts_frequency_documents_and_examples():
     assert by_stem["gelm"].document_count == 2
     assert "gelmiyor" in by_stem["gelm"].examples
     assert by_stem["bozul"].count == 1
-    assert by_stem["arıyor"[:-4] if False else "ar"].count == 1
+    assert by_stem["ar"].count == 1
