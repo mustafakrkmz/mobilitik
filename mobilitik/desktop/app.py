@@ -44,7 +44,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_TITLE} — Mobilya Şikâyet Analizi")
-        self.resize(1280, 920)
+        self.resize(1380, 940)
         self.repo = ComplaintRepository(DB_PATH)
         self.process: QProcess | None = None
         self._distinctive_cache: dict[str, list] = {}
@@ -114,9 +114,13 @@ class MainWindow(QMainWindow):
         self.total_card = self._metric_card("Seçili Dönem Şikâyet", "0")
         self.resolved_card = self._metric_card("Çözüldü", "—")
         self.response_card = self._metric_card("Firma Yanıtı", "—")
+        self.response_time_card = self._metric_card("Medyan Yanıt Süresi", "—")
+        self.resolution_time_card = self._metric_card("Medyan Çözüm Süresi", "—")
         cards.addWidget(self.total_card[0])
         cards.addWidget(self.resolved_card[0])
         cards.addWidget(self.response_card[0])
+        cards.addWidget(self.response_time_card[0])
+        cards.addWidget(self.resolution_time_card[0])
         layout.addLayout(cards)
 
         actions = QHBoxLayout()
@@ -137,8 +141,10 @@ class MainWindow(QMainWindow):
 
         self.complaints_tab = QWidget()
         complaints_layout = QVBoxLayout(self.complaints_tab)
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Tarih", "Firma", "Başlık", "Çözüldü", "Yanıt", "URL"])
+        self.table = QTableWidget(0, 8)
+        self.table.setHorizontalHeaderLabels(
+            ["Tarih", "Firma", "Başlık", "Çözüldü", "Yanıt", "Yanıt Süresi", "Çözüm Süresi", "URL"]
+        )
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setAlternatingRowColors(True)
@@ -146,29 +152,37 @@ class MainWindow(QMainWindow):
         header_view.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header_view.setSectionResizeMode(2, QHeaderView.Stretch)
-        header_view.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(5, QHeaderView.Stretch)
+        for col in (3, 4, 5, 6):
+            header_view.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(7, QHeaderView.Stretch)
         complaints_layout.addWidget(self.table)
         tabs.addTab(self.complaints_tab, "Şikâyetler")
 
         self.analysis_tab = QWidget()
         analysis_layout = QVBoxLayout(self.analysis_tab)
         analysis_info = QLabel(
-            "Bir şikâyet birden fazla kategoriye girebilir. Yüzdeler kategori içindeki çözülme ve firma yanıt oranlarını gösterir."
+            "Bir şikâyet birden fazla kategoriye girebilir. Yanıt ve çözüm süreleri yalnızca sayfada açık tarih bulunan kayıtlardan hesaplanır; tarih yoksa süre tahmin edilmez."
         )
         analysis_info.setWordWrap(True)
         analysis_info.setStyleSheet("color: #666;")
         analysis_layout.addWidget(analysis_info)
-        self.category_table = QTableWidget(0, 5)
+        self.category_table = QTableWidget(0, 7)
         self.category_table.setHorizontalHeaderLabels(
-            ["Kategori", "Şikâyet", "Çözülen", "Çözülme %", "Firma Yanıt %"]
+            [
+                "Kategori",
+                "Şikâyet",
+                "Çözülen",
+                "Çözülme %",
+                "Firma Yanıt %",
+                "Medyan Yanıt",
+                "Medyan Çözüm",
+            ]
         )
         self.category_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.category_table.setAlternatingRowColors(True)
         category_header = self.category_table.horizontalHeader()
         category_header.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in range(1, 5):
+        for col in range(1, 7):
             category_header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         analysis_layout.addWidget(self.category_table)
         tabs.addTab(self.analysis_tab, "Kategori Analizi")
@@ -331,11 +345,13 @@ class MainWindow(QMainWindow):
                     row["title"] or "",
                     "Evet" if row["resolved"] else "Hayır",
                     "Evet" if row["company_responded"] else "Hayır",
+                    self._duration(row["response_hours"]),
+                    self._duration(row["resolution_hours"]),
                     row["complaint_url"] or "",
                 ]
                 for c, value in enumerate(values):
                     item = QTableWidgetItem(str(value))
-                    if c in (3, 4):
+                    if c in (3, 4, 5, 6):
                         item.setTextAlignment(Qt.AlignCenter)
                     self.table.setItem(r, c, item)
         except sqlite3.Error as exc:
@@ -351,12 +367,18 @@ class MainWindow(QMainWindow):
     def refresh_analysis(self):
         try:
             company, start, end, records = self._filtered_records()
-            total = len(records)
-            resolved = sum(int(bool(row.get("resolved"))) for row in records)
-            responded = sum(int(bool(row.get("company_responded"))) for row in records)
-            self.total_card[1].setText(str(total))
-            self.resolved_card[1].setText(self._pct(resolved, total))
-            self.response_card[1].setText(self._pct(responded, total))
+            metrics = self.repo.filtered_metrics(company=company, start_date=start, end_date=end)
+            self.total_card[1].setText(str(metrics["total"]))
+            self.resolved_card[1].setText(self._pct(metrics["resolved"], metrics["total"]))
+            self.response_card[1].setText(self._pct(metrics["responded"], metrics["total"]))
+            self.response_time_card[1].setText(self._duration(metrics["median_response_hours"]))
+            self.resolution_time_card[1].setText(self._duration(metrics["median_resolution_hours"]))
+            self.response_time_card[0].setToolTip(
+                f"Açık yanıt tarihi bulunan {metrics['timed_responses']} kaydın medyanı."
+            )
+            self.resolution_time_card[0].setToolTip(
+                f"Açık çözüm tarihi bulunan {metrics['timed_resolutions']} kaydın medyanı."
+            )
 
             summary = category_summary(records)
             self.category_table.setRowCount(len(summary))
@@ -367,6 +389,8 @@ class MainWindow(QMainWindow):
                     item["resolved"],
                     f"%{item['resolved_rate']:.1f}",
                     f"%{item['response_rate']:.1f}",
+                    self._duration(item["median_response_hours"]),
+                    self._duration(item["median_resolution_hours"]),
                 ]
                 for c, value in enumerate(values):
                     cell = QTableWidgetItem(str(value))
@@ -443,6 +467,15 @@ class MainWindow(QMainWindow):
         if not total:
             return "—"
         return f"%{(part / total) * 100:.1f}"
+
+    @staticmethod
+    def _duration(hours) -> str:
+        if hours is None:
+            return "—"
+        hours = float(hours)
+        if hours < 24:
+            return f"{hours:.1f} sa"
+        return f"{hours / 24.0:.1f} gün"
 
     def export_csv(self):
         path, _ = QFileDialog.getSaveFileName(self, "CSV Kaydet", "mobilitik_export.csv", "CSV (*.csv)")
