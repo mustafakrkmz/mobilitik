@@ -52,3 +52,33 @@ jobs:
           tests/test_repository.py
           tests/test_pipeline.py
           tests/test_timing.py
+
+  live-site-smoke:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[live-smoke]')
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install application dependencies
+        run: pip install -r requirements.txt
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Crawl one public listing page
+        run: |
+          rm -f mobilitik.db
+          scrapy crawl complaints -a company=istikbal -a max_pages=1 -s LOG_LEVEL=INFO
+      - name: Assert that live complaints were stored
+        run: |
+          python - <<'PY'
+          import sqlite3
+          import sys
+
+          with sqlite3.connect('mobilitik.db') as conn:
+              count = conn.execute('SELECT COUNT(*) FROM complaints').fetchone()[0]
+          print(f'Live smoke collected {count} complaints')
+          raise SystemExit(0 if count > 0 else 1)
+          PY
