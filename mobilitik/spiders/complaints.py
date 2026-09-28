@@ -145,6 +145,20 @@ class ComplaintSpider(scrapy.Spider):
             },
         )
 
+    def _in_requested_range(self, value: dt.datetime | None) -> bool:
+        """Return True when a parsed complaint date is inside the requested range.
+
+        Missing dates are allowed through so the detail page can make the final decision.
+        """
+        if value is None:
+            return True
+        day = value.date()
+        if self.start_date and day < self.start_date:
+            return False
+        if self.end_date and day > self.end_date:
+            return False
+        return True
+
     def parse_listing(self, response):
         page_num = response.meta["page_num"]
 
@@ -177,6 +191,7 @@ class ComplaintSpider(scrapy.Spider):
             return
 
         detail_requests = 0
+        skipped_by_date = 0
         for card in cards:
             href = (
                 card.css("h2.complaint-title a::attr(href)").get()
@@ -199,6 +214,13 @@ class ComplaintSpider(scrapy.Spider):
             listing_resolved = "Çözüldü" in normalized_card_text
             listing_date = parse_datetime(normalized_card_text)
 
+            # Filter individual cards instead of shutting down the whole spider.
+            # Detail callbacks are asynchronous: one old complaint can arrive before
+            # newer queued complaints, so CloseSpider here/there would drop valid data.
+            if not self._in_requested_range(listing_date):
+                skipped_by_date += 1
+                continue
+
             detail_requests += 1
             yield scrapy.Request(
                 complaint_url,
@@ -212,7 +234,12 @@ class ComplaintSpider(scrapy.Spider):
                 },
             )
 
-        self.logger.info("Page %s: queued %s complaint detail requests.", page_num, detail_requests)
+        self.logger.info(
+            "Page %s: queued %s complaint detail requests; skipped %s outside date range.",
+            page_num,
+            detail_requests,
+            skipped_by_date,
+        )
 
         if self.max_pages and page_num >= self.start_page + self.max_pages - 1:
             return
@@ -229,9 +256,10 @@ class ComplaintSpider(scrapy.Spider):
         if parsed_date is None:
             parsed_date = parse_datetime(response.meta.get("listing_date"))
 
-        if self.start_date and parsed_date and parsed_date.date() < self.start_date:
-            raise CloseSpider("date range completed")
-        if self.end_date and parsed_date and parsed_date.date() > self.end_date:
+        # Never close the spider from a detail callback. Responses are asynchronous,
+        # so an out-of-range detail may arrive before valid queued complaints.
+        if parsed_date and not self._in_requested_range(parsed_date):
+            self.logger.debug("Skipping complaint outside requested date range: %s", response.url)
             return
 
         title_parts = response.css("h1.complaint-detail-title ::text").getall()
