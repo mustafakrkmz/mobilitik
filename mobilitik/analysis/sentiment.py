@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
-from .classifier import classify_record
+from .classifier import classify_record, get_category_rules
 
 
 DEFAULT_MODEL_ID = "incidelen/bert-base-turkish-sentiment-analysis-cased"
@@ -40,13 +41,23 @@ def text_fingerprint(title: str | None, body: str | None) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def aspect_fingerprint(title: str | None, body: str | None) -> str:
+    """Fingerprint complaint text together with the active manual category rules."""
+    payload = {
+        "text": text_fingerprint(title, body),
+        "rules": get_category_rules(),
+    }
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
 def split_sentences(text: str) -> list[str]:
     """A conservative Turkish-friendly sentence splitter for complaint prose."""
-    cleaned = re.sub(r"\s+", " ", text or "").strip()
-    if not cleaned:
+    raw = (text or "").strip()
+    if not raw:
         return []
-    parts = re.split(r"(?<=[.!?])\s+|\s*[\r\n]+\s*", cleaned)
-    return [part.strip() for part in parts if part and part.strip()]
+    parts = re.split(r"(?<=[.!?])\s+|\s*[\r\n]+\s*", raw)
+    return [re.sub(r"\s+", " ", part).strip() for part in parts if part and part.strip()]
 
 
 def _canonical_label(label: str) -> str | None:
