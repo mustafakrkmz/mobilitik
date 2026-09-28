@@ -3,7 +3,10 @@ from __future__ import annotations
 import datetime as dt
 import re
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
+
+ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
 
 TURKISH_MONTHS = {
     "Ocak": 1,
@@ -42,8 +45,9 @@ def parse_datetime(text: str | None, reference_date: dt.date | None = None) -> d
     """Parse ISO, numeric and Turkish Şikayetvar-style date strings.
 
     A year omitted from a Turkish date is inferred relative to ``reference_date``.
-    The parser deliberately returns ``None`` instead of guessing when the input
-    does not contain a recognizable date/time.
+    Offset-aware ISO timestamps are converted to Europe/Istanbul wall time so
+    they remain comparable with the Turkish local timestamps shown on the site.
+    The parser returns ``None`` instead of guessing when no date is recognizable.
     """
     if not text:
         return None
@@ -54,7 +58,7 @@ def parse_datetime(text: str | None, reference_date: dt.date | None = None) -> d
     try:
         parsed = dt.datetime.fromisoformat(iso_candidate)
         if parsed.tzinfo is not None:
-            parsed = parsed.astimezone(dt.timezone.utc).replace(tzinfo=None)
+            parsed = parsed.astimezone(ISTANBUL_TZ).replace(tzinfo=None)
         return parsed
     except ValueError:
         pass
