@@ -2,25 +2,27 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Iterable
 
 
-TOKEN_RE = re.compile(r"[A-Za-zÇĞİÖŞÜçğıöşü]+", re.UNICODE)
+TOKEN_RE = re.compile(r"[A-Za-zÇĞİIÖŞÜçğıöşü]+", re.UNICODE)
+_TURKISH_LOWER_TRANSLATION = str.maketrans({"I": "ı", "İ": "i"})
 
 
 def normalize_text(text: str) -> str:
-    text = (text or "").lower()
-    text = (
-        text.replace("ı", "i")
-        .replace("ğ", "g")
-        .replace("ü", "u")
-        .replace("ş", "s")
-        .replace("ö", "o")
-        .replace("ç", "c")
-    )
-    return re.sub(r"\s+", " ", text).strip()
+    """Normalize whitespace and casing without destroying Turkish characters.
+
+    Python's default lower-casing turns capital ``İ`` into ``i`` plus a
+    combining dot. The old tokenizer then saw ``İstikbal`` as ``i`` +
+    ``stikbal``. Translating Turkish I/İ before lower-casing keeps words intact.
+    """
+    value = unicodedata.normalize("NFC", text or "")
+    value = value.translate(_TURKISH_LOWER_TRANSLATION).lower()
+    value = unicodedata.normalize("NFC", value)
+    return re.sub(r"\s+", " ", value).strip()
 
 
 _RAW_STOPWORDS = {
@@ -32,10 +34,15 @@ _RAW_STOPWORDS = {
 STOPWORDS = {normalize_text(word) for word in _RAW_STOPWORDS}
 
 
-def tokenize(text: str, min_len: int = 3) -> list[str]:
+def raw_tokens(text: str, min_len: int = 2) -> list[str]:
+    """Tokenize Turkish text without stop-word removal."""
     normalized = normalize_text(text)
     tokens = [m.group(0) for m in TOKEN_RE.finditer(normalized)]
-    return [t for t in tokens if len(t) >= min_len and t not in STOPWORDS]
+    return [token for token in tokens if len(token) >= min_len]
+
+
+def tokenize(text: str, min_len: int = 3) -> list[str]:
+    return [token for token in raw_tokens(text, min_len=min_len) if token not in STOPWORDS]
 
 
 def ngrams(tokens: list[str], n: int) -> list[str]:
@@ -87,8 +94,8 @@ class TextAnalyzer:
             idf = math.log((1 + doc_count) / (1 + df)) + 1.0
             scores[term] = tf * idf
 
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
-        return [TermScore(term=t, score=s, count=term_freq[t]) for t, s in ranked]
+        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:top_k]
+        return [TermScore(term=term, score=score, count=term_freq[term]) for term, score in ranked]
 
 
 def distinctive_terms(grouped_documents: dict[str, list[str]], n: int = 1, top_k: int = 15) -> dict[str, list[TermScore]]:
@@ -111,6 +118,6 @@ def distinctive_terms(grouped_documents: dict[str, list[str]], n: int = 1, top_k
             presence = group_presence[term]
             idf = math.log((1 + group_count) / (1 + presence)) + 1.0
             scored.append(TermScore(term, count * idf, count))
-        scored.sort(key=lambda x: x.score, reverse=True)
+        scored.sort(key=lambda item: item.score, reverse=True)
         result[group] = scored[:top_k]
     return result
