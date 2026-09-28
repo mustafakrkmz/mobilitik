@@ -43,13 +43,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(f"{APP_TITLE} — Mobilya Şikâyet Analizi")
         self.resize(1280, 900)
-
         self.repo = ComplaintRepository(DB_PATH)
         self.process: QProcess | None = None
-
         self._build_ui()
         self.refresh_data()
-
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(2500)
         self.refresh_timer.timeout.connect(self.refresh_data)
@@ -70,7 +67,6 @@ class MainWindow(QMainWindow):
 
         controls = QGroupBox("Veri Toplama ve Analiz Filtresi")
         form = QGridLayout(controls)
-
         self.company_combo = QComboBox()
         self.company_combo.setEditable(True)
         self.company_combo.addItems(["istikbal", "bellona", "kelebek-mobilya"])
@@ -80,23 +76,19 @@ class MainWindow(QMainWindow):
         self.start_date.setCalendarPopup(True)
         self.start_date.setDisplayFormat("dd.MM.yyyy")
         self.start_date.setDate(QDate.currentDate().addYears(-1))
-
         self.end_date = QDateEdit()
         self.end_date.setCalendarPopup(True)
         self.end_date.setDisplayFormat("dd.MM.yyyy")
         self.end_date.setDate(QDate.currentDate())
-
         self.max_pages = QSpinBox()
         self.max_pages.setRange(1, 10000)
         self.max_pages.setValue(3)
 
         self.start_button = QPushButton("Veri Toplamayı Başlat")
         self.start_button.clicked.connect(self.start_scraping)
-
         self.stop_button = QPushButton("Durdur")
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_scraping)
-
         self.analyze_button = QPushButton("Seçili Dönemi Analiz Et")
         self.analyze_button.clicked.connect(self.refresh_analysis)
 
@@ -157,17 +149,12 @@ class MainWindow(QMainWindow):
 
         self.analysis_tab = QWidget()
         analysis_layout = QVBoxLayout(self.analysis_tab)
-        analysis_info = QLabel(
-            "Bir şikâyet birden fazla kategoriye girebilir. Yüzdeler kategori içindeki çözülme ve firma yanıt oranlarını gösterir."
-        )
+        analysis_info = QLabel("Bir şikâyet birden fazla kategoriye girebilir. Yüzdeler kategori içindeki çözülme ve firma yanıt oranlarını gösterir.")
         analysis_info.setWordWrap(True)
         analysis_info.setStyleSheet("color: #666;")
         analysis_layout.addWidget(analysis_info)
-
         self.category_table = QTableWidget(0, 5)
-        self.category_table.setHorizontalHeaderLabels(
-            ["Kategori", "Şikâyet", "Çözülen", "Çözülme %", "Firma Yanıt %"]
-        )
+        self.category_table.setHorizontalHeaderLabels(["Kategori", "Şikâyet", "Çözülen", "Çözülme %", "Firma Yanıt %"])
         self.category_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.category_table.setAlternatingRowColors(True)
         category_header = self.category_table.horizontalHeader()
@@ -179,13 +166,10 @@ class MainWindow(QMainWindow):
 
         self.word_tab = QWidget()
         word_layout = QVBoxLayout(self.word_tab)
-        word_info = QLabel(
-            "Seçili firma ve tarih aralığındaki şikâyet metinlerinden en sık kelime ve kelime grupları ile TF-IDF ağırlıklı ifadeler hesaplanır."
-        )
+        word_info = QLabel("Seçili firma ve tarih aralığındaki şikâyet metinlerinden en sık kelime ve kelime grupları ile TF-IDF ağırlıklı ifadeler hesaplanır.")
         word_info.setWordWrap(True)
         word_info.setStyleSheet("color: #666;")
         word_layout.addWidget(word_info)
-
         word_controls = QHBoxLayout()
         self.ngram_combo = QComboBox()
         self.ngram_combo.addItem("Tek kelime", 1)
@@ -196,7 +180,6 @@ class MainWindow(QMainWindow):
         word_controls.addWidget(self.ngram_combo)
         word_controls.addStretch()
         word_layout.addLayout(word_controls)
-
         self.word_table = QTableWidget(0, 4)
         self.word_table.setHorizontalHeaderLabels(["İfade", "Sıklık", "TF-IDF", "Belge Sayısı"])
         self.word_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -209,12 +192,10 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.word_tab, "Kelime Analizi")
 
         layout.addWidget(tabs, 1)
-
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.setVisible(False)
         layout.addWidget(self.progress)
-
         log_group = QGroupBox("Çalışma Günlüğü")
         log_layout = QVBoxLayout(log_group)
         self.log = QTextEdit()
@@ -240,29 +221,18 @@ class MainWindow(QMainWindow):
         if not company:
             QMessageBox.warning(self, APP_TITLE, "Firma alanı boş bırakılamaz.")
             return
-
         if self.start_date.date() > self.end_date.date():
             QMessageBox.warning(self, APP_TITLE, "Başlangıç tarihi bitiş tarihinden sonra olamaz.")
             return
-
         if self.process and self.process.state() != QProcess.NotRunning:
             return
-
-        args = [
-            "-m", "scrapy", "crawl", "complaints",
-            "-a", f"company={company}",
-            "-a", f"start_date={self.start_date.date().toString('yyyy-MM-dd')}",
-            "-a", f"end_date={self.end_date.date().toString('yyyy-MM-dd')}",
-            "-a", f"max_pages={self.max_pages.value()}",
-        ]
-
+        args = ["-m", "scrapy", "crawl", "complaints", "-a", f"company={company}", "-a", f"start_date={self.start_date.date().toString('yyyy-MM-dd')}", "-a", f"end_date={self.end_date.date().toString('yyyy-MM-dd')}", "-a", f"max_pages={self.max_pages.value()}"]
         self.process = QProcess(self)
         self.process.setProgram(sys.executable)
         self.process.setArguments(args)
         self.process.setProcessChannelMode(QProcess.MergedChannels)
         self.process.readyReadStandardOutput.connect(self._read_process_output)
         self.process.finished.connect(self._process_finished)
-
         self.log.append(f"▶ {company} için veri toplama başlatılıyor…")
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
@@ -300,18 +270,10 @@ class MainWindow(QMainWindow):
             self.total_card[1].setText(str(metrics["total"]))
             self.resolved_card[1].setText(self._pct(metrics["resolved"], metrics["total"]))
             self.response_card[1].setText(self._pct(metrics["responded"], metrics["total"]))
-
             rows = self.repo.list_complaints(limit=500)
             self.table.setRowCount(len(rows))
             for r, row in enumerate(rows):
-                values = [
-                    row["complaint_date"] or "",
-                    row["company"] or "",
-                    row["title"] or "",
-                    "Evet" if row["resolved"] else "Hayır",
-                    "Evet" if row["company_responded"] else "Hayır",
-                    row["complaint_url"] or "",
-                ]
+                values = [row["complaint_date"] or "", row["company"] or "", row["title"] or "", "Evet" if row["resolved"] else "Hayır", "Evet" if row["company_responded"] else "Hayır", row["complaint_url"] or ""]
                 for c, value in enumerate(values):
                     item = QTableWidgetItem(str(value))
                     if c in (3, 4):
@@ -333,13 +295,7 @@ class MainWindow(QMainWindow):
             summary = category_summary(records)
             self.category_table.setRowCount(len(summary))
             for r, item in enumerate(summary):
-                values = [
-                    item["category"],
-                    item["complaints"],
-                    item["resolved"],
-                    f"%{item['resolved_rate']:.1f}",
-                    f"%{item['response_rate']:.1f}",
-                ]
+                values = [item["category"], item["complaints"], item["resolved"], f"%{item['resolved_rate']:.1f}", f"%{item['response_rate']:.1f}"]
                 for c, value in enumerate(values):
                     cell = QTableWidgetItem(str(value))
                     if c > 0:
@@ -360,24 +316,11 @@ class MainWindow(QMainWindow):
             frequencies = dict(analyzer.top_ngrams(n=n, top_k=50))
             tfidf_rows = analyzer.tfidf(n=n, top_k=50, min_doc_freq=1)
             tfidf_map = {row.term: row.score for row in tfidf_rows}
-
-            document_counts = {}
-            for term in set(frequencies) | set(tfidf_map):
-                document_counts[term] = sum(
-                    1 for tokens in analyzer.tokenized if term in " ".join(tokens) if n == 1
-                ) if n == 1 else sum(
-                    1 for tokens in analyzer.tokenized if term in __import__('mobilitik.analysis.textstats', fromlist=['ngrams']).ngrams(tokens, n)
-                )
-
+            doc_freq = analyzer.document_frequency(n=n)
             terms = sorted(frequencies, key=lambda t: frequencies[t], reverse=True)[:50]
             self.word_table.setRowCount(len(terms))
             for r, term in enumerate(terms):
-                values = [
-                    term,
-                    frequencies.get(term, 0),
-                    f"{tfidf_map.get(term, 0.0):.2f}",
-                    document_counts.get(term, 0),
-                ]
+                values = [term, frequencies.get(term, 0), f"{tfidf_map.get(term, 0.0):.2f}", doc_freq.get(term, 0)]
                 for c, value in enumerate(values):
                     cell = QTableWidgetItem(str(value))
                     if c > 0:
