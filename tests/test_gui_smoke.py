@@ -4,7 +4,7 @@ import sqlite3
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QDate
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 import mobilitik.desktop.app as app_module
 from mobilitik.desktop.data import ComplaintRepository
@@ -28,7 +28,7 @@ def _seed(db_path):
                     "https://example.test/gui1",
                     "2026-03-01 10:00:00",
                     "Teslimat gecikti",
-                    "Teslimat tarihi ertelendi ve kargo gelmedi.",
+                    "Teslimat tarihi ertelendi, kargo gelmiyor ve süreç gecikiyor.",
                     1,
                     1,
                     "İlgileniyoruz",
@@ -79,18 +79,69 @@ def test_main_window_runs_analysis_headlessly(monkeypatch, tmp_path):
         window.refresh_analysis()
         app.processEvents()
 
-        assert window.tabs.count() == 4
+        assert window.tabs.count() == 6
         assert window.total_card[1].text() == "2"
         assert window.resolved_card[1].text() == "%50.0"
         assert window.response_card[1].text() == "%100.0"
         assert window.response_time_card[1].text() == "9.0 sa"
         assert window.resolution_time_card[1].text() == "2.0 gün"
         assert window.table.columnCount() == 8
+        assert window.table.rowCount() == 2
         assert window.category_table.columnCount() == 7
-        assert window.category_table.rowCount() >= 2
+        assert window.category_table.item(0, 0).text() == "Tümü"
+        assert window.category_table.rowCount() >= 3
         assert window.word_table.rowCount() > 0
-        assert window.distinctive_category_combo.count() >= 2
+        assert window.verb_table.rowCount() > 0
+        assert window.distinctive_category_combo.itemText(0) == "Tümü"
         assert window.distinctive_table.rowCount() > 0
+        assert window.category_editor.rowCount() > 0
+
+        link = window.table.cellWidget(0, 7)
+        assert isinstance(link, QLabel)
+        assert link.openExternalLinks() is True
+        assert "Şikâyeti aç" in link.text()
+        assert link.toolTip()
+        assert window.table.item(0, 2).toolTip()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_apply_filter_updates_complaint_list_and_category_filter(monkeypatch, tmp_path):
+    app, window = _make_window(monkeypatch, tmp_path)
+    try:
+        window.company_combo.setCurrentText("istikbal")
+        window.start_date.setDate(QDate(2026, 3, 15))
+        window.end_date.setDate(QDate(2026, 12, 31))
+        window.refresh_analysis()
+        app.processEvents()
+        assert window.total_card[1].text() == "1"
+        assert window.table.rowCount() == 1
+        assert "Koltuk kumaşı" in window.table.item(0, 2).text()
+
+        window.start_date.setDate(QDate(2026, 1, 1))
+        window.refresh_analysis()
+        window.complaint_category_combo.setCurrentText("Teslimat / Lojistik")
+        app.processEvents()
+        assert window.table.rowCount() == 1
+        assert "Teslimat" in window.table.item(0, 2).text()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_verb_filter_reduces_visible_verb_rows(monkeypatch, tmp_path):
+    app, window = _make_window(monkeypatch, tmp_path)
+    try:
+        window.company_combo.setCurrentText("istikbal")
+        window.start_date.setDate(QDate(2026, 1, 1))
+        window.end_date.setDate(QDate(2026, 12, 31))
+        window.refresh_analysis()
+        assert window.verb_table.rowCount() >= 2
+        window.verb_filter.setText("gelm")
+        app.processEvents()
+        assert window.verb_table.rowCount() == 1
+        assert window.verb_table.item(0, 0).text() == "gelm"
     finally:
         window.close()
         app.processEvents()
