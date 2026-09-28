@@ -6,59 +6,79 @@ from urllib.parse import urljoin
 import scrapy
 from scrapy.exceptions import CloseSpider
 
+from mobilitik.timing import elapsed_hours, first_datetime, parse_datetime
 
-TURKISH_MONTHS = {
-    "Ocak": 1,
-    "Şubat": 2,
-    "Mart": 3,
-    "Nisan": 4,
-    "Mayıs": 5,
-    "Haziran": 6,
-    "Temmuz": 7,
-    "Ağustos": 8,
-    "Eylül": 9,
-    "Ekim": 10,
-    "Kasım": 11,
-    "Aralık": 12,
-}
+
+RESPONSE_CONTAINER_SELECTORS = (
+    ".brand-answer",
+    ".company-response",
+    ".complaint-detail-brand-response",
+    "[class*='brand-answer']",
+    "[class*='brand-response']",
+    "[class*='company-response']",
+    "[data-testid*='brand-answer']",
+    "[data-testid*='company-response']",
+)
+
+RESOLUTION_CONTAINER_SELECTORS = (
+    ".complaint-solution",
+    ".complaint-result",
+    ".solution-detail",
+    ".resolution-detail",
+    "[class*='complaint-solution']",
+    "[class*='complaint-result']",
+    "[data-testid*='solution']",
+    "[data-testid*='resolution']",
+)
+
+DATE_VALUE_SELECTORS = (
+    "time::attr(datetime)",
+    "[datetime]::attr(datetime)",
+    "time::text",
+    ".date::text",
+    ".post-time ::text",
+    "[class*='date']::text",
+    "[class*='time']::text",
+)
 
 
 def parse_sikayetvar_date(text: str, reference_date: dt.date | None = None) -> dt.datetime | None:
-    """Parse Şikayetvar date strings.
+    """Backward-compatible wrapper for the shared date parser."""
+    return parse_datetime(text, reference_date=reference_date)
 
-    Supported examples:
-    - ``28 Eylül 12:10``
-    - ``31 Aralık 2025 18:24``
 
-    When the year is omitted, infer it relative to the crawl date. If the
-    resulting month/day would lie implausibly far in the future, use the
-    previous year instead.
+def _normalized_text(selector) -> str | None:
+    parts = [part.strip() for part in selector.css("::text").getall() if part.strip()]
+    value = " ".join(parts)
+    return " ".join(value.split()) or None
+
+
+def _event_from_containers(response, selectors: tuple[str, ...]) -> tuple[str | None, dt.datetime | None]:
+    """Return the first meaningful event text and an explicit date when present.
+
+    Several selectors are intentionally supported because Şikayetvar has changed
+    its CSS class names over time. A date is only returned when it is explicitly
+    present in the matched event container; no duration is inferred from status
+    alone.
     """
-    reference_date = reference_date or dt.date.today()
-    try:
-        parts = text.strip().split()
-        if len(parts) not in (3, 4):
-            return None
+    fallback_text: str | None = None
+    for selector in selectors:
+        for node in response.css(selector):
+            text = _normalized_text(node)
+            if text and fallback_text is None:
+                fallback_text = text
 
-        day = int(parts[0])
-        month = TURKISH_MONTHS[parts[1]]
+            values: list[str | None] = []
+            for date_selector in DATE_VALUE_SELECTORS:
+                values.extend(node.css(date_selector).getall())
+            if text:
+                values.append(text)
 
-        if len(parts) == 4:
-            year = int(parts[2])
-            time_part = parts[3]
-        else:
-            year = reference_date.year
-            time_part = parts[2]
+            event_date = first_datetime(values)
+            if event_date is not None:
+                return text, event_date
 
-        hour, minute = map(int, time_part.split(":"))
-        candidate = dt.datetime(year, month, day, hour, minute)
-
-        if len(parts) == 3 and candidate.date() > reference_date + dt.timedelta(days=31):
-            candidate = candidate.replace(year=reference_date.year - 1)
-
-        return candidate
-    except (ValueError, KeyError, IndexError):
-        return None
+    return fallback_text, None
 
 
 class ComplaintSpider(scrapy.Spider):
@@ -170,18 +190,26 @@ class ComplaintSpider(scrapy.Spider):
 
         title = " ".join(p.strip() for p in title_parts if p.strip()) or None
         complaint_text = " ".join(p.strip() for p in body_parts if p.strip()) or None
-
-        # The resolved marker is associated with the complaint card on listing
-        # pages. Reading it there avoids false positives caused by unrelated
-        # 'Çözüldü' text elsewhere on a detail page.
         resolved = bool(response.meta.get("listing_resolved"))
 
-        company_response_parts = response.css(
-            ".brand-answer ::text, .company-response ::text, .complaint-detail-brand-response ::text"
-        ).getall()
-        company_response_text = " ".join(
-            p.strip() for p in company_response_parts if p.strip()
-        ) or None
+        company_response_text, company_response_date = _event_from_containers(
+            response, RESPONSE_CONTAINER_SELECTORS
+        )
+        response_hours = elapsed_hours(parsed_date, company_response_date)
+        if company_response_date is not None and response_hours is None:
+            # Reject impossible event ordering rather than manufacturing a duration.
+            company_response_date = None
+
+        resolution_text: str | None = None
+        resolution_date: dt.datetime | None = None
+        resolution_hours: float | None = None
+        if resolved:
+            resolution_text, resolution_date = _event_from_containers(
+                response, RESOLUTION_CONTAINER_SELECTORS
+            )
+            resolution_hours = elapsed_hours(parsed_date, resolution_date)
+            if resolution_date is not None and resolution_hours is None:
+                resolution_date = None
 
         self.items_collected += 1
         yield {
@@ -191,8 +219,13 @@ class ComplaintSpider(scrapy.Spider):
             "title": title,
             "complaint_text": complaint_text,
             "resolved": resolved,
-            "company_responded": bool(company_response_text),
+            "company_responded": bool(company_response_text or company_response_date),
             "company_response_text": company_response_text,
+            "company_response_date": company_response_date.isoformat(sep=" ") if company_response_date else None,
+            "response_hours": response_hours,
+            "resolution_text": resolution_text,
+            "resolution_date": resolution_date.isoformat(sep=" ") if resolution_date else None,
+            "resolution_hours": resolution_hours,
             "listing_page": response.meta["listing_page"],
             "scraped_at": dt.datetime.now().isoformat(timespec="seconds"),
         }
