@@ -5,6 +5,7 @@ venv/
 .env
 *.db
 *.sqlite3
+mobilitik_categories.json
 exports/*.csv
 exports/*.xlsx
 .playwright/
