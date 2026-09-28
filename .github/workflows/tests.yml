@@ -9,6 +9,9 @@ on:
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,6 +20,4 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
       - name: Run tests
-        env:
-          PYTHONPATH: ${{ github.workspace }}
         run: pytest -q
