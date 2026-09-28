@@ -1,6 +1,6 @@
 # Mobilitik
 
-Mobilya sektöründeki tüketici şikâyetlerini akademik araştırma amacıyla toplamak, yapılandırmak ve analiz etmek için geliştirilen açık kaynak araç.
+Mobilya sektöründeki tüketici şikâyetlerini akademik araştırma amacıyla toplamak, yapılandırmak ve analiz etmek için geliştirilen açık kaynak masaüstü araç.
 
 ## İlk hedef
 
@@ -17,7 +17,25 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-## Kullanım
+## Masaüstü uygulamasını çalıştırma
+
+```bash
+python -m mobilitik.desktop
+```
+
+Arayüz üzerinden:
+
+- firma seçilebilir veya Şikayetvar firma slug'ı elle yazılabilir,
+- başlangıç ve bitiş tarihi seçilebilir,
+- taranacak maksimum sayfa sayısı belirlenebilir,
+- veri toplama başlatılıp durdurulabilir,
+- toplanan kayıtlar yerel tabloda görüntülenebilir,
+- toplam şikâyet, çözülme oranı ve firma yanıt oranı görülebilir,
+- veriler CSV veya Excel olarak dışa aktarılabilir.
+
+İlk test için `max_pages=3` gibi küçük bir değer kullanılması önerilir.
+
+## Komut satırı kullanımı
 
 Örnek olarak bir firma için ilk 3 sayfayı taramak:
 
@@ -61,6 +79,7 @@ Veriler varsayılan olarak `mobilitik.db` dosyasındaki `complaints` tablosuna y
 - Şikayetvar HTML yapısını değiştirdiğinde CSS seçicilerinin güncellenmesi gerekebilir.
 - `Çözüldü` durumu ilk sürümde sayfa metninden muhafazakâr biçimde tespit edilmektedir. Çözüm tarihi ve gerçek çözüm süresi ayrı bir doğrulama aşamasında eklenecektir.
 - Tarihte yıl görünmediğinde mevcut yıl körlemesine atanmaz; yıl geçişlerinde geçmiş tarih olasılığı dikkate alınır.
+- Masaüstü arayüz şu aşamada geliştirme sürümüdür; ilk amaç veri toplama ve kayıt akışını doğrulamaktır.
 
 ## Yol haritası
 
@@ -68,5 +87,6 @@ Veriler varsayılan olarak `mobilitik.db` dosyasındaki `complaints` tablosuna y
 2. Firma yanıt tarihini çıkarma
 3. Çözüm tarihini ve çözüm süresini çıkarma
 4. Mobilya şikâyet kategorilerini tanımlama
-5. CSV/Excel dışa aktarımı
+5. Masaüstü analiz ekranını geliştirme
 6. Firma karşılaştırmalı istatistik ve görselleştirme
+7. Windows için tek dosyalı/kurulumlu dağıtım hazırlama
