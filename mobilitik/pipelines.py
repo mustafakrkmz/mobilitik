@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from mobilitik.text_quality import sanitize_complaint_body
+
 
 TIMING_COLUMNS = {
     "company_response_date": "TEXT",
@@ -40,6 +42,18 @@ class SQLitePipeline:
             """
         )
         self._ensure_timing_columns()
+        self.conn.execute(
+            """
+            UPDATE complaints SET complaint_text = NULL
+            WHERE complaint_text IS NOT NULL AND (
+                complaint_text LIKE '%şikayetini ve yorumlarını okumak%'
+                OR complaint_text LIKE '%şikâyetini ve yorumlarını okumak%'
+                OR complaint_text LIKE '%hakkında şikayet yazmak için tıklayın%'
+                OR complaint_text LIKE '%hakkında şikâyet yazmak için tıklayın%'
+                OR complaint_text LIKE '%Visit to read complaints and reviews%'
+            )
+            """
+        )
         self.conn.commit()
 
     def _ensure_timing_columns(self):
@@ -52,6 +66,7 @@ class SQLitePipeline:
                 self.conn.execute(f"ALTER TABLE complaints ADD COLUMN {column} {sql_type}")
 
     def process_item(self, item, spider=None):
+        complaint_text = sanitize_complaint_body(item.get("complaint_text")) or None
         self.conn.execute(
             """
             INSERT INTO complaints (
@@ -74,7 +89,7 @@ class SQLitePipeline:
             ON CONFLICT(complaint_url) DO UPDATE SET
                 complaint_date = excluded.complaint_date,
                 title = excluded.title,
-                complaint_text = excluded.complaint_text,
+                complaint_text = COALESCE(excluded.complaint_text, complaints.complaint_text),
                 resolved = excluded.resolved,
                 company_responded = excluded.company_responded,
                 company_response_text = excluded.company_response_text,
@@ -91,7 +106,7 @@ class SQLitePipeline:
                 item.get("complaint_url"),
                 item.get("complaint_date"),
                 item.get("title"),
-                item.get("complaint_text"),
+                complaint_text,
                 int(bool(item.get("resolved"))),
                 int(bool(item.get("company_responded"))),
                 item.get("company_response_text"),
