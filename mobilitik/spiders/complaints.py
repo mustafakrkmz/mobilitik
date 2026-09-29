@@ -49,7 +49,24 @@ COMPLAINT_BODY_SELECTORS = (
     "[class*='complaint-description'] ::text",
     "[data-testid*='complaint-description'] ::text",
     "[data-testid*='complaint-content'] ::text",
+    "[data-testid*='complaint-body'] ::text",
     "article [class*='description'] ::text",
+    "article [class*='content'] p ::text",
+    "main [class*='description'] ::text",
+    "main [class*='content'] p ::text",
+)
+
+# Şikayetvar uses this kind of sentence as an SEO/link-preview description.
+# It is not the consumer complaint body and must never enter text analyses.
+_BOILERPLATE_MARKERS = (
+    "şikayetini ve yorumlarını okumak",
+    "şikâyetini ve yorumlarını okumak",
+    "hakkında şikayet yazmak için tıklayın",
+    "hakkında şikâyet yazmak için tıklayın",
+    "şikayetleri için tıklayın",
+    "şikâyetleri için tıklayın",
+    "visit to read complaints and reviews",
+    "file yours",
 )
 
 
@@ -68,15 +85,36 @@ def _clean_text(parts) -> str | None:
     return " ".join(value.split()) or None
 
 
+def _is_boilerplate_text(text: str | None) -> bool:
+    if not text:
+        return False
+    lowered = " ".join(text.lower().split())
+    return any(marker in lowered for marker in _BOILERPLATE_MARKERS)
+
+
+def _valid_complaint_candidate(text: str | None, *, min_length: int = 20) -> bool:
+    if not text or len(text.strip()) < min_length:
+        return False
+    return not _is_boilerplate_text(text)
+
+
 def _structured_complaint_text(response) -> str | None:
-    wanted = ("reviewBody", "articleBody", "description")
+    """Read only structured fields that are intended to hold article/review body.
+
+    Generic JSON-LD ``description`` is intentionally excluded because Sikayetvar
+    currently uses it for SEO preview copy such as '... şikayetini ve yorumlarını
+    okumak ...', which polluted previous Mobilitik analyses.
+    """
+    wanted = ("reviewBody", "articleBody")
 
     def walk(value):
         if isinstance(value, dict):
             for key in wanted:
                 candidate = value.get(key)
-                if isinstance(candidate, str) and len(candidate.strip()) >= 40:
-                    return " ".join(candidate.split())
+                if isinstance(candidate, str):
+                    candidate = " ".join(candidate.split())
+                    if _valid_complaint_candidate(candidate, min_length=40):
+                        return candidate
             for child in value.values():
                 found = walk(child)
                 if found:
@@ -99,24 +137,65 @@ def _structured_complaint_text(response) -> str | None:
     return None
 
 
+def _long_paragraph_complaint_text(response) -> str | None:
+    """Fallback for Sikayetvar's frequently changing detail-page class names.
+
+    Consumer complaint bodies are generally substantial paragraph blocks. We rank
+    visible paragraphs by length and reject known SEO/link-preview boilerplate.
+    This is deliberately below explicit complaint selectors in priority.
+    """
+    candidates: list[str] = []
+    selectors = (
+        "main p ::text",
+        "article p ::text",
+        "main p::text",
+        "article p::text",
+    )
+    for selector in selectors:
+        # Each selector may return paragraph fragments. Keep each paragraph node
+        # separate when possible so unrelated page text is not concatenated.
+        node_selector = selector.replace(" ::text", "").replace("::text", "")
+        for node in response.css(node_selector):
+            text = _clean_text(node.css("::text").getall())
+            if _valid_complaint_candidate(text, min_length=40):
+                candidates.append(text)
+    if not candidates:
+        return None
+    return max(candidates, key=len)
+
+
 def _extract_complaint_text(response) -> str | None:
     for selector in COMPLAINT_BODY_SELECTORS:
         text = _clean_text(response.css(selector).getall())
-        if text:
+        if _valid_complaint_candidate(text):
             return text
+
+    paragraph_text = _long_paragraph_complaint_text(response)
+    if paragraph_text:
+        return paragraph_text
+
     return _structured_complaint_text(response)
 
 
 def _listing_excerpt(card, title: str | None, normalized_card_text: str) -> str | None:
-    for selector in ("p ::text", "[class*='description'] ::text", "[class*='content'] ::text"):
+    # Current Sikayetvar listing cards expose the consumer's own complaint excerpt
+    # in paragraph text. This is a safer fallback than SEO metadata on detail pages.
+    for selector in (
+        "p ::text",
+        "p::text",
+        "[data-testid*='description'] ::text",
+        "[class*='description'] ::text",
+    ):
         text = _clean_text(card.css(selector).getall())
-        if text and len(text) >= 20:
+        if _valid_complaint_candidate(text):
             return text[:2500]
 
     fallback = normalized_card_text
     if title and fallback.startswith(title):
         fallback = fallback[len(title):].strip()
-    return fallback[:2500] if len(fallback) >= 20 else None
+    if _valid_complaint_candidate(fallback):
+        return fallback[:2500]
+    return None
 
 
 def _event_from_containers(response, selectors: tuple[str, ...]) -> tuple[str | None, dt.datetime | None]:
@@ -283,7 +362,19 @@ class ComplaintSpider(scrapy.Spider):
 
         title_parts = response.css("h1.complaint-detail-title ::text").getall() or response.css("h1 ::text").getall()
         title = _clean_text(title_parts) or response.meta.get("listing_title")
-        complaint_text = _extract_complaint_text(response) or response.meta.get("listing_excerpt")
+
+        detail_text = _extract_complaint_text(response)
+        listing_excerpt = response.meta.get("listing_excerpt")
+        complaint_text = detail_text if _valid_complaint_candidate(detail_text) else listing_excerpt
+        if _is_boilerplate_text(complaint_text):
+            complaint_text = None
+
+        if not complaint_text:
+            self.logger.warning(
+                "Şikâyet gövdesi alınamadı; SEO önizleme metni analiz verisi olarak kaydedilmedi: %s",
+                response.url,
+            )
+
         resolved = bool(response.meta.get("listing_resolved"))
 
         company_response_text, company_response_date = _event_from_containers(response, RESPONSE_CONTAINER_SELECTORS)
