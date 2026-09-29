@@ -58,6 +58,13 @@ class ComplaintRepository:
         conn.row_factory = sqlite3.Row
         return conn
 
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+        return conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone() is not None
+
     def _ensure_database(self):
         with self._connect() as conn:
             conn.execute(
@@ -89,6 +96,16 @@ class ComplaintRepository:
             for column, sql_type in TIMING_COLUMNS.items():
                 if column not in existing:
                     conn.execute(f"ALTER TABLE complaints ADD COLUMN {column} {sql_type}")
+
+            # Remove cached NLP outputs produced from the invalid SEO text before
+            # clearing the body itself. A later NLP run will recompute from the
+            # corrected complaint text (or title only until the complaint is re-scraped).
+            for table in ("sentiment_results", "aspect_sentiment"):
+                if self._table_exists(conn, table):
+                    conn.execute(
+                        f"DELETE FROM {table} WHERE complaint_id IN "
+                        f"(SELECT id FROM complaints WHERE {_BOILERPLATE_SQL})"
+                    )
 
             # Data-quality migration: never feed legacy SEO preview copy into
             # word/category/verb/NLP analyses. Re-scraping the same complaint URL
