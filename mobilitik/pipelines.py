@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from mobilitik.text_quality import sanitize_complaint_body
+from mobilitik.text_quality import normalize_space, sanitize_complaint_body
 
 
 TIMING_COLUMNS = {
@@ -42,18 +42,7 @@ class SQLitePipeline:
             """
         )
         self._ensure_timing_columns()
-        self.conn.execute(
-            """
-            UPDATE complaints SET complaint_text = NULL
-            WHERE complaint_text IS NOT NULL AND (
-                complaint_text LIKE '%şikayetini ve yorumlarını okumak%'
-                OR complaint_text LIKE '%şikâyetini ve yorumlarını okumak%'
-                OR complaint_text LIKE '%hakkında şikayet yazmak için tıklayın%'
-                OR complaint_text LIKE '%hakkında şikâyet yazmak için tıklayın%'
-                OR complaint_text LIKE '%Visit to read complaints and reviews%'
-            )
-            """
-        )
+        self._clean_existing_mixed_bodies()
         self.conn.commit()
 
     def _ensure_timing_columns(self):
@@ -65,8 +54,36 @@ class SQLitePipeline:
             if column not in existing:
                 self.conn.execute(f"ALTER TABLE complaints ADD COLUMN {column} {sql_type}")
 
+    def _clean_existing_mixed_bodies(self):
+        """Repair legacy rows where SEO/company answers leaked into complaint_text."""
+        rows = self.conn.execute(
+            "SELECT id, complaint_text, company_response_text FROM complaints "
+            "WHERE complaint_text IS NOT NULL"
+        ).fetchall()
+        for complaint_id, body, response in rows:
+            cleaned = sanitize_complaint_body(body, response) or None
+            original = normalize_space(body) or None
+            if cleaned != original:
+                self.conn.execute(
+                    "UPDATE complaints SET complaint_text = ? WHERE id = ?",
+                    (cleaned, complaint_id),
+                )
+                for table in ("sentiment_results", "aspect_sentiment"):
+                    exists = self.conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                        (table,),
+                    ).fetchone()
+                    if exists:
+                        self.conn.execute(
+                            f"DELETE FROM {table} WHERE complaint_id = ?",
+                            (complaint_id,),
+                        )
+
     def process_item(self, item, spider=None):
-        complaint_text = sanitize_complaint_body(item.get("complaint_text")) or None
+        complaint_text = sanitize_complaint_body(
+            item.get("complaint_text"),
+            item.get("company_response_text"),
+        ) or None
         self.conn.execute(
             """
             INSERT INTO complaints (
