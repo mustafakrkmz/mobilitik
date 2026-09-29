@@ -8,6 +8,7 @@ import scrapy
 from scrapy.exceptions import CloseSpider
 
 from mobilitik.company import normalize_company_input
+from mobilitik.text_quality import is_boilerplate_complaint_text, sanitize_complaint_body
 from mobilitik.timing import elapsed_hours, first_datetime, parse_datetime
 
 
@@ -56,17 +57,6 @@ COMPLAINT_BODY_SELECTORS = (
     "main [class*='content'] p ::text",
 )
 
-_BOILERPLATE_MARKERS = (
-    "şikayetini ve yorumlarını okumak",
-    "şikâyetini ve yorumlarını okumak",
-    "hakkında şikayet yazmak için tıklayın",
-    "hakkında şikâyet yazmak için tıklayın",
-    "şikayetleri için tıklayın",
-    "şikâyetleri için tıklayın",
-    "visit to read complaints and reviews",
-    "file yours",
-)
-
 
 def parse_sikayetvar_date(text: str, reference_date: dt.date | None = None) -> dt.datetime | None:
     return parse_datetime(text, reference_date=reference_date)
@@ -83,26 +73,14 @@ def _clean_text(parts) -> str | None:
     return " ".join(value.split()) or None
 
 
-def _is_boilerplate_text(text: str | None) -> bool:
-    if not text:
-        return False
-    lowered = " ".join(text.lower().split())
-    return any(marker in lowered for marker in _BOILERPLATE_MARKERS)
-
-
 def _valid_complaint_candidate(text: str | None, *, min_length: int = 1) -> bool:
     if not text or len(text.strip()) < min_length:
         return False
-    return not _is_boilerplate_text(text)
+    return not is_boilerplate_complaint_text(text)
 
 
 def _structured_complaint_text(response) -> str | None:
-    """Read only structured fields that are intended to hold article/review body.
-
-    Generic JSON-LD ``description`` is intentionally excluded because Sikayetvar
-    currently uses it for SEO preview copy such as '... şikayetini ve yorumlarını
-    okumak ...', which polluted previous Mobilitik analyses.
-    """
+    """Read only structured fields intended to hold the review/article body."""
     wanted = ("reviewBody", "articleBody")
 
     def walk(value):
@@ -350,25 +328,28 @@ class ComplaintSpider(scrapy.Spider):
 
         title_parts = response.css("h1.complaint-detail-title ::text").getall() or response.css("h1 ::text").getall()
         title = _clean_text(title_parts) or response.meta.get("listing_title")
-
-        detail_text = _extract_complaint_text(response)
-        listing_excerpt = response.meta.get("listing_excerpt")
-        complaint_text = detail_text if _valid_complaint_candidate(detail_text) else listing_excerpt
-        if _is_boilerplate_text(complaint_text):
-            complaint_text = None
-
-        if not complaint_text:
-            self.logger.warning(
-                "Şikâyet gövdesi alınamadı; SEO önizleme metni analiz verisi olarak kaydedilmedi: %s",
-                response.url,
-            )
-
         resolved = bool(response.meta.get("listing_resolved"))
 
+        # Extract the company answer first. Some current Sikayetvar layouts place
+        # complaint + answer under a broad common content container; knowing the
+        # answer lets us cut that tail out of complaint_text deterministically.
         company_response_text, company_response_date = _event_from_containers(response, RESPONSE_CONTAINER_SELECTORS)
         response_hours = elapsed_hours(parsed_date, company_response_date)
         if company_response_date is not None and response_hours is None:
             company_response_date = None
+
+        detail_text = _extract_complaint_text(response)
+        listing_excerpt = response.meta.get("listing_excerpt")
+        complaint_text = sanitize_complaint_body(detail_text, company_response_text)
+        if not complaint_text:
+            complaint_text = sanitize_complaint_body(listing_excerpt)
+        complaint_text = complaint_text or None
+
+        if not complaint_text:
+            self.logger.warning(
+                "Şikâyet gövdesi alınamadı; SEO/firma yanıtı analiz verisi olarak kaydedilmedi: %s",
+                response.url,
+            )
 
         resolution_text = None
         resolution_date = None
