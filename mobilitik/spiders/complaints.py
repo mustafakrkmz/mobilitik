@@ -56,8 +56,6 @@ COMPLAINT_BODY_SELECTORS = (
     "main [class*='content'] p ::text",
 )
 
-# Şikayetvar uses this kind of sentence as an SEO/link-preview description.
-# It is not the consumer complaint body and must never enter text analyses.
 _BOILERPLATE_MARKERS = (
     "şikayetini ve yorumlarını okumak",
     "şikâyetini ve yorumlarını okumak",
@@ -92,7 +90,7 @@ def _is_boilerplate_text(text: str | None) -> bool:
     return any(marker in lowered for marker in _BOILERPLATE_MARKERS)
 
 
-def _valid_complaint_candidate(text: str | None, *, min_length: int = 20) -> bool:
+def _valid_complaint_candidate(text: str | None, *, min_length: int = 1) -> bool:
     if not text or len(text.strip()) < min_length:
         return False
     return not _is_boilerplate_text(text)
@@ -138,12 +136,6 @@ def _structured_complaint_text(response) -> str | None:
 
 
 def _long_paragraph_complaint_text(response) -> str | None:
-    """Fallback for Sikayetvar's frequently changing detail-page class names.
-
-    Consumer complaint bodies are generally substantial paragraph blocks. We rank
-    visible paragraphs by length and reject known SEO/link-preview boilerplate.
-    This is deliberately below explicit complaint selectors in priority.
-    """
     candidates: list[str] = []
     selectors = (
         "main p ::text",
@@ -152,8 +144,6 @@ def _long_paragraph_complaint_text(response) -> str | None:
         "article p::text",
     )
     for selector in selectors:
-        # Each selector may return paragraph fragments. Keep each paragraph node
-        # separate when possible so unrelated page text is not concatenated.
         node_selector = selector.replace(" ::text", "").replace("::text", "")
         for node in response.css(node_selector):
             text = _clean_text(node.css("::text").getall())
@@ -178,8 +168,6 @@ def _extract_complaint_text(response) -> str | None:
 
 
 def _listing_excerpt(card, title: str | None, normalized_card_text: str) -> str | None:
-    # Current Sikayetvar listing cards expose the consumer's own complaint excerpt
-    # in paragraph text. This is a safer fallback than SEO metadata on detail pages.
     for selector in (
         "p ::text",
         "p::text",
@@ -187,13 +175,13 @@ def _listing_excerpt(card, title: str | None, normalized_card_text: str) -> str 
         "[class*='description'] ::text",
     ):
         text = _clean_text(card.css(selector).getall())
-        if _valid_complaint_candidate(text):
+        if _valid_complaint_candidate(text, min_length=20):
             return text[:2500]
 
     fallback = normalized_card_text
     if title and fallback.startswith(title):
         fallback = fallback[len(title):].strip()
-    if _valid_complaint_candidate(fallback):
+    if _valid_complaint_candidate(fallback, min_length=20):
         return fallback[:2500]
     return None
 
