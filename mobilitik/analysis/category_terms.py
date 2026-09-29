@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
+from mobilitik.text_quality import analysis_text
+
 from .classifier import classify_record
 from .textstats import TermScore, TextAnalyzer, distinctive_terms
 
@@ -26,7 +28,7 @@ def category_distinctive_terms(
     for row in source_rows:
         title = row.get("title") or ""
         body = row.get("complaint_text") or ""
-        text = f"{title} {body}".strip()
+        text = analysis_text(title, body, row.get("company_response_text"))
         all_documents.append(text)
         result = classify_record(title, body)
         categories = result.categories or ["Diğer"]
