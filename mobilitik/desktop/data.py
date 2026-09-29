@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 
 from mobilitik.company import normalize_company_input
+from mobilitik.text_quality import normalize_space, sanitize_complaint_body
 from mobilitik.timing import median
 
 
@@ -34,18 +35,6 @@ TIMING_COLUMNS = {
     "resolution_date": "TEXT",
     "resolution_hours": "REAL",
 }
-
-# Historic Mobilitik versions accidentally accepted Sikayetvar's SEO/link-preview
-# sentence as complaint_text. These patterns identify that copy, not user content.
-_BOILERPLATE_SQL = """
-    complaint_text IS NOT NULL AND (
-        complaint_text LIKE '%şikayetini ve yorumlarını okumak%'
-        OR complaint_text LIKE '%şikâyetini ve yorumlarını okumak%'
-        OR complaint_text LIKE '%hakkında şikayet yazmak için tıklayın%'
-        OR complaint_text LIKE '%hakkında şikâyet yazmak için tıklayın%'
-        OR complaint_text LIKE '%Visit to read complaints and reviews%'
-    )
-"""
 
 
 class ComplaintRepository:
@@ -97,20 +86,38 @@ class ComplaintRepository:
                 if column not in existing:
                     conn.execute(f"ALTER TABLE complaints ADD COLUMN {column} {sql_type}")
 
-            # Remove cached NLP outputs produced from the invalid SEO text before
-            # clearing the body itself. A later NLP run will recompute from the
-            # corrected complaint text (or title only until the complaint is re-scraped).
-            for table in ("sentiment_results", "aspect_sentiment"):
-                if self._table_exists(conn, table):
-                    conn.execute(
-                        f"DELETE FROM {table} WHERE complaint_id IN "
-                        f"(SELECT id FROM complaints WHERE {_BOILERPLATE_SQL})"
-                    )
+            self._repair_legacy_text_rows(conn)
 
-            # Data-quality migration: never feed legacy SEO preview copy into
-            # word/category/verb/NLP analyses. Re-scraping the same complaint URL
-            # will refill the body with the real text or listing excerpt.
-            conn.execute(f"UPDATE complaints SET complaint_text = NULL WHERE {_BOILERPLATE_SQL}")
+    def _repair_legacy_text_rows(self, conn: sqlite3.Connection):
+        """Remove SEO copy and company answers that leaked into old complaint bodies."""
+        rows = conn.execute(
+            "SELECT id, complaint_text, company_response_text FROM complaints "
+            "WHERE complaint_text IS NOT NULL"
+        ).fetchall()
+        changed_ids: list[int] = []
+        for row in rows:
+            original = normalize_space(row["complaint_text"]) or None
+            cleaned = sanitize_complaint_body(
+                row["complaint_text"],
+                row["company_response_text"],
+            ) or None
+            if cleaned != original:
+                conn.execute(
+                    "UPDATE complaints SET complaint_text = ? WHERE id = ?",
+                    (cleaned, row["id"]),
+                )
+                changed_ids.append(int(row["id"]))
+
+        if not changed_ids:
+            return
+
+        placeholders = ",".join("?" for _ in changed_ids)
+        for table in ("sentiment_results", "aspect_sentiment"):
+            if self._table_exists(conn, table):
+                conn.execute(
+                    f"DELETE FROM {table} WHERE complaint_id IN ({placeholders})",
+                    changed_ids,
+                )
 
     @staticmethod
     def _metrics_from_rows(rows):
