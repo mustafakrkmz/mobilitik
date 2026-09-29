@@ -7,6 +7,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
+from mobilitik.text_quality import analysis_text
+
 from .classifier import classify_record, get_category_rules
 
 
@@ -33,7 +35,7 @@ class AspectSentiment:
 
 
 def complaint_text(title: str | None, body: str | None) -> str:
-    return " ".join(part.strip() for part in (title or "", body or "") if part and part.strip()).strip()
+    return analysis_text(title, body)
 
 
 def text_fingerprint(title: str | None, body: str | None) -> str:
