@@ -35,6 +35,18 @@ TIMING_COLUMNS = {
     "resolution_hours": "REAL",
 }
 
+# Historic Mobilitik versions accidentally accepted Sikayetvar's SEO/link-preview
+# sentence as complaint_text. These patterns identify that copy, not user content.
+_BOILERPLATE_SQL = """
+    complaint_text IS NOT NULL AND (
+        complaint_text LIKE '%şikayetini ve yorumlarını okumak%'
+        OR complaint_text LIKE '%şikâyetini ve yorumlarını okumak%'
+        OR complaint_text LIKE '%hakkında şikayet yazmak için tıklayın%'
+        OR complaint_text LIKE '%hakkında şikâyet yazmak için tıklayın%'
+        OR complaint_text LIKE '%Visit to read complaints and reviews%'
+    )
+"""
+
 
 class ComplaintRepository:
     def __init__(self, db_path: Path):
@@ -77,6 +89,11 @@ class ComplaintRepository:
             for column, sql_type in TIMING_COLUMNS.items():
                 if column not in existing:
                     conn.execute(f"ALTER TABLE complaints ADD COLUMN {column} {sql_type}")
+
+            # Data-quality migration: never feed legacy SEO preview copy into
+            # word/category/verb/NLP analyses. Re-scraping the same complaint URL
+            # will refill the body with the real text or listing excerpt.
+            conn.execute(f"UPDATE complaints SET complaint_text = NULL WHERE {_BOILERPLATE_SQL}")
 
     @staticmethod
     def _metrics_from_rows(rows):
