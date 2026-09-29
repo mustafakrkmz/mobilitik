@@ -5,7 +5,9 @@ import re
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Mapping
+
+from mobilitik.text_quality import analysis_text
 
 
 CATEGORY_RULES_PATH = Path("mobilitik_categories.json")
@@ -191,7 +193,6 @@ def parse_rule_terms(value: str, *, default_weight: float = 2.0) -> dict[str, fl
 
 
 def _normalize(text: str) -> str:
-    # Turkish-aware I/İ lower-casing prevents İstikbal -> i + combining-dot issues.
     text = (text or "").replace("I", "ı").replace("İ", "i").lower()
     text = re.sub(r"[^\wçğıöşü\s]", " ", text, flags=re.UNICODE)
     return " ".join(text.split())
@@ -248,5 +249,4 @@ def classify_text(
 
 
 def classify_record(title: str | None, body: str | None) -> ClassificationResult:
-    parts: Iterable[str] = [part for part in (title, body) if part]
-    return classify_text(" ".join(parts))
+    return classify_text(analysis_text(title, body))
