@@ -37,6 +37,15 @@ def _anchor_at(tokens: list[str], start: int, patterns: tuple[str, ...]) -> bool
     return all(_token_matches(tokens[start + offset], pattern) for offset, pattern in enumerate(patterns))
 
 
+def _anchor_positions(tokens: list[str], patterns: tuple[str, ...]) -> list[int]:
+    anchor_len = len(patterns)
+    return [
+        index
+        for index in range(0, len(tokens) - anchor_len + 1)
+        if _anchor_at(tokens, index, patterns)
+    ]
+
+
 def _contexts_for_tokens(
     tokens: list[str],
     patterns: tuple[str, ...],
@@ -46,9 +55,7 @@ def _contexts_for_tokens(
 ) -> list[str]:
     results: list[str] = []
     anchor_len = len(patterns)
-    for index in range(0, len(tokens) - anchor_len + 1):
-        if not _anchor_at(tokens, index, patterns):
-            continue
+    for index in _anchor_positions(tokens, patterns):
         if direction == "left":
             context_tokens = tokens[max(0, index - window) : index]
             if context_tokens:
@@ -111,11 +118,11 @@ def analyze_context(
             record.get("company_response_text"),
         )
         tokens = raw_tokens(text, min_len=1)
+        positions = _anchor_positions(tokens, patterns)
+        if positions:
+            anchor_document_ids.add(record_index)
+            anchor_mentions += len(positions)
         contexts = _contexts_for_tokens(tokens, patterns, direction=direction, window=window)
-        if not contexts:
-            continue
-        anchor_document_ids.add(record_index)
-        anchor_mentions += len(contexts)
         for context in contexts:
             counts[context] += 1
             doc_sets[context].add(record_index)
