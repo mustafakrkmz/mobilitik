@@ -1,4 +1,4 @@
-from mobilitik.desktop.advanced_ui import main
+from mobilitik.desktop.modern_ui import main
 
 
 if __name__ == "__main__":
