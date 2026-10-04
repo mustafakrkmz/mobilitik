@@ -45,3 +45,14 @@ def test_trigrams_are_supported():
     ])
     top = dict(analyzer.top_ngrams(n=3, top_k=10))
     assert top["teknik servis kaydı"] == 2
+
+
+def test_extended_stopwords_filtered():
+    tokens = tokenize("Zaten bundan dolayı kendisi hiçbir şekilde geri dönüş yapmadı")
+    assert "zaten" not in tokens
+    assert "bundan" not in tokens
+    assert "dolayı" not in tokens
+    assert "kendisi" not in tokens
+    assert "hiçbir" not in tokens
+    assert "şekilde" not in tokens
+    assert "dönüş" in tokens

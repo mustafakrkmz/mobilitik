@@ -36,14 +36,15 @@ from mobilitik.desktop.nlp_ui import NlpMainWindow
 class EnhancedMainWindow(NlpMainWindow):
     """User-facing Mobilitik window with drill-down and responsive NLP UI."""
 
-    def __init__(self):
+    def __init__(self, defer_initial_refresh: bool = False):
         self._hover_records: list[dict] = []
         self._distinctive_match_records: list[dict] = []
-        super().__init__()
+        super().__init__(defer_initial_refresh=defer_initial_refresh)
         self._setup_complaint_hover()
         self._setup_distinctive_drilldown()
-        self.refresh_analysis()
-        self.refresh_nlp_cached_view()
+        if not defer_initial_refresh:
+            self.refresh_analysis()
+            self.refresh_nlp_cached_view()
 
     # ------------------------------------------------------------------
     # Complaint hover preview
@@ -138,6 +139,8 @@ class EnhancedMainWindow(NlpMainWindow):
         splitter.setSizes([330, 420])
         layout.addWidget(splitter, 1)
 
+        self.distinctive_splitter = splitter
+        self.distinctive_result_group = result_group
         self.distinctive_table.cellClicked.connect(self._show_distinctive_matches)
 
     @staticmethod

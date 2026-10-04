@@ -43,16 +43,17 @@ from mobilitik.analysis.classifier import (
 from mobilitik.analysis.summary import category_summary
 from mobilitik.analysis.textstats import TextAnalyzer, normalize_text
 from mobilitik.analysis.verbs import progressive_verb_stats
+from mobilitik.config import DEFAULT_DB_PATH
 from mobilitik.desktop.commands import build_scrapy_args
 from mobilitik.desktop.data import ComplaintRepository
 
 
 APP_TITLE = "Mobilitik"
-DB_PATH = Path("mobilitik.db")
+DB_PATH = DEFAULT_DB_PATH
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, defer_initial_refresh: bool = False):
         super().__init__()
         self.setWindowTitle(f"{APP_TITLE} — Mobilya Şikâyet Analizi")
         self.resize(1420, 980)
@@ -64,7 +65,10 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._load_category_editor()
         self._refresh_category_choices()
-        self.refresh_analysis()
+        self._refresh_company_choices()
+        self.refresh_database_tab()
+        if not defer_initial_refresh:
+            self.refresh_analysis()
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(2500)
         self.refresh_timer.timeout.connect(self.refresh_data)
@@ -165,8 +169,17 @@ class MainWindow(QMainWindow):
         self.complaint_category_combo.currentIndexChanged.connect(
             lambda *_: self._render_complaints(self._analysis_records)
         )
-        complaint_filter_row.addWidget(QLabel("Kategori filtresi"))
+        complaint_filter_row.addWidget(QLabel("Kategori:"))
         complaint_filter_row.addWidget(self.complaint_category_combo)
+        complaint_filter_row.addSpacing(16)
+        complaint_filter_row.addWidget(QLabel("Metin Ara:"))
+        self.complaint_search_input = QLineEdit()
+        self.complaint_search_input.setPlaceholderText("Başlık veya şikâyet metninde ara…")
+        self.complaint_search_input.setClearButtonEnabled(True)
+        self.complaint_search_input.textChanged.connect(
+            lambda *_: self._render_complaints(self._analysis_records)
+        )
+        complaint_filter_row.addWidget(self.complaint_search_input)
         complaint_filter_row.addStretch()
         complaints_layout.addLayout(complaint_filter_row)
 
@@ -184,6 +197,7 @@ class MainWindow(QMainWindow):
         for col in (3, 4, 5, 6):
             header_view.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         header_view.setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        self.table.cellDoubleClicked.connect(self._open_complaint_detail)
         complaints_layout.addWidget(self.table)
         tabs.addTab(self.complaints_tab, "Şikâyetler")
 
@@ -345,6 +359,7 @@ class MainWindow(QMainWindow):
         category_buttons.addStretch()
         category_editor_layout.addLayout(category_buttons)
         tabs.addTab(self.category_editor_tab, "Kategori Yönetimi")
+        self._build_database_tab(tabs)
 
         layout.addWidget(tabs, 1)
         self.progress = QProgressBar()
@@ -447,15 +462,51 @@ class MainWindow(QMainWindow):
 
     def _records_for_selected_category(self, records: list[dict]) -> list[dict]:
         category = self.complaint_category_combo.currentText() or "Tümü"
-        if category == "Tümü":
-            return records
+        query = (
+            self.complaint_search_input.text().strip().lower()
+            if hasattr(self, "complaint_search_input")
+            else ""
+        )
+
         selected: list[dict] = []
         for record in records:
-            result = classify_record(record.get("title"), record.get("complaint_text"))
-            categories = result.categories or ["Diğer"]
-            if category in categories:
-                selected.append(record)
+            if category != "Tümü":
+                result = classify_record(record.get("title"), record.get("complaint_text"))
+                categories = result.categories or ["Diğer"]
+                if category not in categories:
+                    continue
+
+            if query:
+                title = (record.get("title") or "").lower()
+                text = (record.get("complaint_text") or "").lower()
+                if query not in title and query not in text:
+                    continue
+
+            selected.append(record)
         return selected
+
+    def _open_complaint_detail(self, row: int, column: int = 0):
+        if column == 7:
+            return None
+        visible = getattr(self, "_current_table_records", None) or getattr(self, "_hover_records", None) or self._records_for_selected_category(self._analysis_records)
+        if 0 <= row < len(visible):
+            from mobilitik.desktop.drilldown import ComplaintDetailDialog
+            dialog = ComplaintDetailDialog(visible[row], self)
+            dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+            if not hasattr(self, "_open_detail_dialogs"):
+                self._open_detail_dialogs = []
+            self._open_detail_dialogs.append(dialog)
+
+            def cleanup(*_args):
+                if dialog in getattr(self, "_open_detail_dialogs", []):
+                    self._open_detail_dialogs.remove(dialog)
+
+            dialog.destroyed.connect(cleanup)
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+            return dialog
+        return None
 
     @staticmethod
     def _tooltip_text(record: dict) -> str:
@@ -540,6 +591,8 @@ class MainWindow(QMainWindow):
             self.refresh_word_analysis(records=records)
             self.refresh_verb_analysis(records=records)
             self.refresh_distinctive_analysis(records=records)
+            if hasattr(self, "refresh_database_tab"):
+                self.refresh_database_tab()
             self.log.append(f"Analiz güncellendi: {company}, {start}–{end}, {len(records)} kayıt.")
         except sqlite3.Error as exc:
             self.log.append(f"Analiz veritabanı uyarısı: {exc}")
@@ -713,19 +766,285 @@ class MainWindow(QMainWindow):
             return f"{hours:.1f} sa"
         return f"{hours / 24.0:.1f} gün"
 
+    def _build_database_tab(self, tabs: QTabWidget):
+        self.database_tab = QWidget()
+        db_layout = QVBoxLayout(self.database_tab)
+        db_layout.setContentsMargins(12, 12, 12, 12)
+        db_layout.setSpacing(12)
+
+        db_info_label = QLabel(
+            "Veritabanı içeriğini, depolama durumunu ve firma bazlı kayıtları bu ekrandan yönetebilirsiniz. "
+            "İstenmeyen firmaların kayıtlarını silebilir veya tüm veritabanını fabrika ayarlarına sıfırlayabilirsiniz."
+        )
+        db_info_label.setWordWrap(True)
+        db_info_label.setStyleSheet("color: #94a3b8; font-size: 9.5pt;")
+        db_layout.addWidget(db_info_label)
+
+        # Kartlar Satırı
+        cards_layout = QHBoxLayout()
+        cards_layout.setSpacing(10)
+        self.db_path_card = self._metric_card("Veritabanı Dosyası", "—")
+        self.db_size_card = self._metric_card("Dosya Boyutu", "—")
+        self.db_complaints_card = self._metric_card("Toplam Şikâyet", "—")
+        self.db_sentiment_card = self._metric_card("NLP Duygu Kaydı", "—")
+        self.db_companies_card = self._metric_card("Kayıtlı Firma", "—")
+
+        cards_layout.addWidget(self.db_path_card[0], 2)
+        cards_layout.addWidget(self.db_size_card[0], 1)
+        cards_layout.addWidget(self.db_complaints_card[0], 1)
+        cards_layout.addWidget(self.db_sentiment_card[0], 1)
+        cards_layout.addWidget(self.db_companies_card[0], 1)
+        db_layout.addLayout(cards_layout)
+
+        # Kayıtlı Firmalar Tablosu
+        company_group = QGroupBox("Kayıtlı Firmalar ve Şikâyet Dağılımı")
+        cg_layout = QVBoxLayout(company_group)
+        cg_layout.setSpacing(8)
+
+        self.db_company_table = QTableWidget(0, 7)
+        self.db_company_table.setHorizontalHeaderLabels([
+            "Firma Adı", "Şikâyet Sayısı", "Çözülen", "NLP Kaydı", "İlk Şikâyet", "Son Şikâyet", "İşlem"
+        ])
+        self.db_company_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.db_company_table.setAlternatingRowColors(True)
+        self.db_company_table.setSelectionBehavior(QTableWidget.SelectRows)
+        tbl_header = self.db_company_table.horizontalHeader()
+        tbl_header.setSectionResizeMode(0, QHeaderView.Stretch)
+        for i in range(1, 7):
+            tbl_header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        cg_layout.addWidget(self.db_company_table, 1)
+
+        company_actions = QHBoxLayout()
+        company_actions.addWidget(QLabel("Firma Seçimi:"))
+        self.db_company_combo = QComboBox()
+        self.db_company_combo.setMinimumWidth(180)
+        company_actions.addWidget(self.db_company_combo)
+
+        delete_company_btn = QPushButton("🗑️ Seçili Firmanın Tüm Kayıtlarını Sil")
+        delete_company_btn.setStyleSheet(
+            "background-color: #dc2626; color: white; font-weight: bold; padding: 7px 14px; border-radius: 6px;"
+        )
+        delete_company_btn.clicked.connect(self._delete_selected_company_action)
+        company_actions.addWidget(delete_company_btn)
+
+        vacuum_btn = QPushButton("⚡ Veritabanını Sıkıştır (VACUUM)")
+        vacuum_btn.clicked.connect(self._vacuum_database_action)
+        company_actions.addWidget(vacuum_btn)
+
+        company_actions.addStretch()
+        cg_layout.addLayout(company_actions)
+        db_layout.addWidget(company_group, 2)
+
+        # Tehlikeli Bölge — Sıfırlama
+        danger_group = QGroupBox("⚠️ Tehlikeli Bölge — Veritabanını Tamamen Sıfırla")
+        danger_group.setStyleSheet(
+            "QGroupBox { border: 1.5px solid #ef4444; border-radius: 8px; margin-top: 10px; font-weight: bold; } "
+            "QGroupBox::title { color: #f87171; }"
+        )
+        danger_layout = QHBoxLayout(danger_group)
+        danger_layout.setContentsMargins(14, 12, 14, 12)
+        danger_layout.setSpacing(16)
+
+        danger_desc = QLabel(
+            "Veritabanındaki TÜM firmaları, şikâyetleri, scraping verilerini ve önbelleğe alınmış NLP modelleri "
+            "sonuçlarını kalıcı olarak siler ve depolama alanını sıfırlar. Bu işlem geri alınamaz!"
+        )
+        danger_desc.setWordWrap(True)
+        danger_desc.setStyleSheet("color: #fca5a5; font-size: 9pt;")
+        danger_layout.addWidget(danger_desc, 1)
+
+        reset_db_btn = QPushButton("⚠️ Tüm Veritabanını Sıfırla")
+        reset_db_btn.setStyleSheet(
+            "background-color: #b91c1c; color: white; font-weight: bold; padding: 9px 18px; border-radius: 7px;"
+        )
+        reset_db_btn.clicked.connect(self._reset_database_action)
+        danger_layout.addWidget(reset_db_btn, 0)
+        db_layout.addWidget(danger_group)
+
+        tabs.addTab(self.database_tab, "Veritabanı Yönetimi")
+
+    def refresh_database_tab(self):
+        if not hasattr(self, "db_company_table"):
+            return
+        stats = self.repo.database_stats()
+        file_size_bytes = stats["file_size_bytes"]
+        if file_size_bytes > 1024 * 1024:
+            size_str = f"{file_size_bytes / (1024 * 1024):.2f} MB"
+        elif file_size_bytes > 1024:
+            size_str = f"{file_size_bytes / 1024:.1f} KB"
+        else:
+            size_str = f"{file_size_bytes} B"
+
+        db_file_name = Path(stats["db_path"]).name
+        self.db_path_card[1].setText(db_file_name)
+        self.db_path_card[0].setToolTip(stats["db_path"])
+        self.db_size_card[1].setText(size_str)
+        self.db_complaints_card[1].setText(f"{stats['total_complaints']:,}".replace(",", "."))
+        self.db_sentiment_card[1].setText(f"{stats['total_sentiments']:,}".replace(",", "."))
+        self.db_companies_card[1].setText(str(len(stats["companies"])))
+
+        self.db_company_combo.blockSignals(True)
+        self.db_company_combo.clear()
+        comp_names = [c["company"] for c in stats["companies"]]
+        self.db_company_combo.addItems(comp_names)
+        self.db_company_combo.blockSignals(False)
+
+        companies = stats["companies"]
+        self.db_company_table.setRowCount(len(companies))
+        for r, comp in enumerate(companies):
+            c_name = comp["company"]
+            count = comp["count"]
+            resolved = comp["resolved"]
+            nlp = comp["nlp_count"]
+            min_d = str(comp["min_date"] or "—")
+            max_d = str(comp["max_date"] or "—")
+
+            name_item = QTableWidgetItem(c_name)
+            self.db_company_table.setItem(r, 0, name_item)
+
+            c_item = QTableWidgetItem(f"{count:,}".replace(",", "."))
+            c_item.setTextAlignment(Qt.AlignCenter)
+            self.db_company_table.setItem(r, 1, c_item)
+
+            res_pct = (resolved / count * 100) if count else 0
+            res_item = QTableWidgetItem(f"{resolved:,} (%{res_pct:.1f})".replace(",", "."))
+            res_item.setTextAlignment(Qt.AlignCenter)
+            self.db_company_table.setItem(r, 2, res_item)
+
+            nlp_item = QTableWidgetItem(f"{nlp:,}".replace(",", "."))
+            nlp_item.setTextAlignment(Qt.AlignCenter)
+            self.db_company_table.setItem(r, 3, nlp_item)
+
+            min_item = QTableWidgetItem(min_d)
+            min_item.setTextAlignment(Qt.AlignCenter)
+            self.db_company_table.setItem(r, 4, min_item)
+
+            max_item = QTableWidgetItem(max_d)
+            max_item.setTextAlignment(Qt.AlignCenter)
+            self.db_company_table.setItem(r, 5, max_item)
+
+            del_btn = QPushButton("🗑️ Sil")
+            del_btn.setStyleSheet(
+                "background-color: #dc2626; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;"
+            )
+            del_btn.setToolTip(f"'{c_name}' firmasının tüm şikâyet ve analiz kayıtlarını sil")
+            del_btn.clicked.connect(lambda _checked=False, c=c_name: self._delete_company_by_name(c))
+            self.db_company_table.setCellWidget(r, 6, del_btn)
+
+    def _refresh_company_choices(self):
+        try:
+            stats = self.repo.database_stats()
+            db_companies = [c["company"] for c in stats["companies"]]
+            current = self.company_combo.currentText().strip()
+            all_comps = list(dict.fromkeys(db_companies + ["istikbal", "bellona", "kelebek-mobilya"]))
+            self.company_combo.blockSignals(True)
+            self.company_combo.clear()
+            self.company_combo.addItems(all_comps)
+            if current and current in all_comps:
+                self.company_combo.setCurrentText(current)
+            elif all_comps:
+                self.company_combo.setCurrentIndex(0)
+            self.company_combo.blockSignals(False)
+        except Exception:
+            pass
+
+    def _delete_selected_company_action(self):
+        company = self.db_company_combo.currentText().strip()
+        self._delete_company_by_name(company)
+
+    def _delete_company_by_name(self, company: str):
+        company = (company or "").strip()
+        if not company:
+            QMessageBox.warning(self, "Uyarı", "Lütfen silinecek bir firma seçin.")
+            return
+
+        stats = self.repo.database_stats()
+        comp_stat = next((c for c in stats["companies"] if c["company"].lower() == company.lower()), None)
+        count_msg = f"{comp_stat['count']} adet şikâyet" if comp_stat else "tüm kayıtlar"
+
+        reply = QMessageBox.warning(
+            self,
+            "Firma Kayıtlarını Silme Onayı",
+            f"'{company}' firmasına ait {count_msg} ve ilişkili tüm NLP duygu analizi kayıtları veritabanından kalıcı olarak silinecektir.\n\n"
+            f"Bu işlem geri alınamaz! Devam etmek istediğinize emin misiniz?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        result = self.repo.delete_company(company)
+        deleted_count = result.get("deleted_complaints", 0)
+        self.log.append(f"✓ '{company}' firmasına ait {deleted_count} şikâyet ve duygu analizi kayıtları silindi.")
+        QMessageBox.information(
+            self,
+            "Firma Silindi",
+            f"'{company}' firmasına ait {deleted_count} şikâyet veritabanından başarıyla silindi ve alan optimize edildi.",
+        )
+        self._refresh_company_choices()
+        self.refresh_database_tab()
+        self.refresh_analysis()
+        if hasattr(self, "refresh_nlp_cached_view"):
+            self.refresh_nlp_cached_view()
+
+    def _reset_database_action(self):
+        stats = self.repo.database_stats()
+        total = stats.get("total_complaints", 0)
+        reply = QMessageBox.critical(
+            self,
+            "⚠️ DİKKAT: Veritabanını Tamamen Sıfırla",
+            f"Veritabanındaki TÜM firmalar, {total} adet şikâyet ve tüm NLP duygu analizi kayıtları kalıcı olarak silinecektir!\n\n"
+            f"Bu işlem geri alınamaz ve tüm veriler silinir. Veritabanını tamamen sıfırlamak istediğinize KESİNLİKLE emin misiniz?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        result = self.repo.reset_database()
+        deleted_count = result.get("deleted_complaints", 0)
+        self.log.append(f"⚠️ Veritabanı tamamen sıfırlandı. ({deleted_count} kayıt temizlendi)")
+        QMessageBox.information(
+            self,
+            "Veritabanı Sıfırlandı",
+            f"Veritabanı başarıyla sıfırlandı. Toplam {deleted_count} şikâyet ve tüm NLP analizleri temizlendi.",
+        )
+        self._refresh_company_choices()
+        self.refresh_database_tab()
+        self.refresh_analysis()
+        if hasattr(self, "refresh_nlp_cached_view"):
+            self.refresh_nlp_cached_view()
+
+    def _vacuum_database_action(self):
+        self.repo.vacuum()
+        self.refresh_database_tab()
+        QMessageBox.information(
+            self,
+            "Optimizasyon Tamamlandı",
+            "Veritabanı başarıyla sıkıştırıldı (VACUUM tamamlandı). Boş alanlar işletim sistemine geri kazandırıldı.",
+        )
+
     def export_csv(self):
         path, _ = QFileDialog.getSaveFileName(self, "CSV Kaydet", "mobilitik_export.csv", "CSV (*.csv)")
         if not path:
             return
-        self.repo.export_csv(Path(path))
+        records = getattr(self, "_analysis_records", None)
+        company = self.company_combo.currentText().strip() or None
+        start = self.start_date.date().toString("yyyy-MM-dd")
+        end = self.end_date.date().toString("yyyy-MM-dd")
+        self.repo.export_csv(Path(path), company=company, start_date=start, end_date=end, records=records)
         QMessageBox.information(self, APP_TITLE, f"CSV kaydedildi:\n{path}")
 
     def export_xlsx(self):
         path, _ = QFileDialog.getSaveFileName(self, "Excel Kaydet", "mobilitik_export.xlsx", "Excel (*.xlsx)")
         if not path:
             return
+        records = getattr(self, "_analysis_records", None)
+        company = self.company_combo.currentText().strip() or None
+        start = self.start_date.date().toString("yyyy-MM-dd")
+        end = self.end_date.date().toString("yyyy-MM-dd")
         try:
-            self.repo.export_xlsx(Path(path))
+            self.repo.export_xlsx(Path(path), company=company, start_date=start, end_date=end, records=records)
         except RuntimeError as exc:
             QMessageBox.critical(self, APP_TITLE, str(exc))
             return

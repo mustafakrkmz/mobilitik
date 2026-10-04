@@ -108,3 +108,46 @@ def test_repository_csv_and_excel_export(tmp_path):
     sheet = workbook["Şikâyetler"]
     assert sheet.max_row == 3
     assert sheet["B2"].value in {"istikbal", "bellona"}
+
+
+def test_repository_filtered_csv_and_excel_export(tmp_path):
+    db_path = tmp_path / "mobilitik.db"
+    repo = ComplaintRepository(db_path)
+    _seed(db_path)
+
+    csv_path = tmp_path / "filtered.csv"
+    xlsx_path = tmp_path / "filtered.xlsx"
+
+    # Sadece istikbal filtresiyle export
+    repo.export_csv(csv_path, company="istikbal")
+    repo.export_xlsx(xlsx_path, company="istikbal")
+
+    with csv_path.open(encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 1
+    assert rows[0]["company"] == "istikbal"
+    assert rows[0]["title"] == "Teslimat gecikti"
+
+    workbook = load_workbook(xlsx_path, read_only=True)
+    sheet = workbook["Şikâyetler"]
+    assert sheet.max_row == 2
+    assert sheet["B2"].value == "istikbal"
+
+
+def test_repository_default_db_path():
+    from mobilitik.config import DEFAULT_DB_PATH
+
+    repo = ComplaintRepository()
+    assert repo.db_path == DEFAULT_DB_PATH
+
+
+def test_repository_indexes_created(tmp_path):
+    db_path = tmp_path / "mobilitik.db"
+    ComplaintRepository(db_path)
+    with sqlite3.connect(db_path) as conn:
+        indexes = {
+            row[1]
+            for row in conn.execute("SELECT type, name FROM sqlite_master WHERE type='index'").fetchall()
+        }
+    assert "idx_complaints_company_date" in indexes
+    assert "idx_complaints_resolved" in indexes

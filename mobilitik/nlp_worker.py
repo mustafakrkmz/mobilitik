@@ -15,6 +15,7 @@ from mobilitik.analysis.sentiment import (
     text_fingerprint,
 )
 from mobilitik.company import normalize_company_input
+from mobilitik.config import DEFAULT_DB_PATH
 from mobilitik.desktop.data import ComplaintRepository
 
 
@@ -184,7 +185,7 @@ def run(
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Mobilitik on-demand Turkish sentiment analysis worker")
-    parser.add_argument("--db", default="mobilitik.db")
+    parser.add_argument("--db", default=str(DEFAULT_DB_PATH))
     parser.add_argument("--company", required=True)
     parser.add_argument("--start-date", required=True)
     parser.add_argument("--end-date", required=True)

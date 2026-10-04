@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from mobilitik.config import DEFAULT_DB_PATH
 from mobilitik.text_quality import normalize_space, sanitize_complaint_body
 
 
@@ -16,8 +17,18 @@ TIMING_COLUMNS = {
 
 
 class SQLitePipeline:
+    def __init__(self, db_path: Path | str | None = None):
+        self._custom_db_path = Path(db_path) if db_path is not None else None
+
     def open_spider(self, spider=None):
-        db_path = Path("mobilitik.db")
+        if self._custom_db_path is not None:
+            db_path = self._custom_db_path
+        elif spider is not None and getattr(spider, "settings", None) and spider.settings.get("SQLITE_DB_PATH"):
+            db_path = Path(spider.settings.get("SQLITE_DB_PATH"))
+        elif Path.cwd().resolve() != DEFAULT_DB_PATH.parent.resolve():
+            db_path = Path("mobilitik.db")
+        else:
+            db_path = DEFAULT_DB_PATH
         self.conn = sqlite3.connect(db_path)
         self.conn.execute(
             """
@@ -42,6 +53,12 @@ class SQLitePipeline:
             """
         )
         self._ensure_timing_columns()
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_complaints_company_date ON complaints(company, complaint_date)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_complaints_resolved ON complaints(resolved)"
+        )
         self._clean_existing_mixed_bodies()
         self.conn.commit()
 

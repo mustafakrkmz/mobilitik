@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from mobilitik.config import DEFAULT_CATEGORIES_PATH
 from mobilitik.text_quality import analysis_text
 
 
-CATEGORY_RULES_PATH = Path("mobilitik_categories.json")
+CATEGORY_RULES_PATH = DEFAULT_CATEGORIES_PATH
 
 DEFAULT_CATEGORY_RULES: dict[str, dict[str, float]] = {
     "Teslimat / Lojistik": {

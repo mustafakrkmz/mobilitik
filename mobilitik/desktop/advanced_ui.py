@@ -29,15 +29,18 @@ from mobilitik.desktop.enhanced_ui import EnhancedMainWindow
 class AdvancedMainWindow(EnhancedMainWindow):
     """Research-oriented UI additions layered on the stable Mobilitik window."""
 
-    def __init__(self):
+    def __init__(self, defer_initial_refresh: bool = False):
         self._open_drilldown_dialogs: list[ComplaintDrilldownDialog] = []
-        super().__init__()
+        super().__init__(defer_initial_refresh=defer_initial_refresh)
         self._setup_word_drilldown()
         self._setup_category_drilldown()
         self._setup_verb_conditions()
+        self._setup_verb_drilldown()
+        self._setup_distinctive_dialog()
         self._setup_nlp_details()
-        self.refresh_analysis()
-        self.refresh_nlp_cached_view()
+        if not defer_initial_refresh:
+            self.refresh_analysis()
+            self.refresh_nlp_cached_view()
 
     # ------------------------------------------------------------------
     # Better complaint-text fallbacks
@@ -68,8 +71,21 @@ class AdvancedMainWindow(EnhancedMainWindow):
     # ------------------------------------------------------------------
     # Shared drill-down windows
     # ------------------------------------------------------------------
-    def _open_records_dialog(self, title: str, records: list[dict]):
-        dialog = ComplaintDrilldownDialog(title, records, self)
+    def _open_records_dialog(
+        self,
+        title: str,
+        records: list[dict],
+        *,
+        highlight_terms: list[str] | str | None = None,
+        explanations: dict[int, str] | None = None,
+    ):
+        dialog = ComplaintDrilldownDialog(
+            title,
+            records,
+            self,
+            highlight_terms=highlight_terms,
+            explanations=explanations,
+        )
         dialog.setAttribute(Qt.WA_DeleteOnClose, True)
         self._open_drilldown_dialogs.append(dialog)
 
@@ -91,17 +107,18 @@ class AdvancedMainWindow(EnhancedMainWindow):
         item = self.word_table.item(row, 0)
         if item is None:
             return
-        term = item.text()
+        term = item.text().strip()
         matches = [
             record for record in getattr(self, "_analysis_records", [])
             if self._record_contains_term(record, term)
         ]
-        self._open_records_dialog(f"Kelime / İfade: {term}", matches)
+        self._open_records_dialog(f"Kelime / İfade: {term}", matches, highlight_terms=[term])
 
     def _setup_category_drilldown(self):
+        self.category_table.cellDoubleClicked.connect(self._open_category_matches_double)
         self.category_table.cellClicked.connect(self._open_category_matches)
         self.category_table.setToolTip(
-            "Şikâyet sayısına tıklayarak o kategoriye giren kayıtları ayrı pencerede açın."
+            "Bir kategoriye çift tıklayarak atanan şikâyetleri ve gerekçelerini açın."
         )
 
     def _records_for_category(self, category: str) -> list[dict]:
@@ -116,16 +133,39 @@ class AdvancedMainWindow(EnhancedMainWindow):
                 matches.append(record)
         return matches
 
+    def _open_category_matches_double(self, row: int, _column: int = 0):
+        item = self.category_table.item(row, 0)
+        if item is not None:
+            self._show_category_drilldown(item.text().strip())
+
     def _open_category_matches(self, row: int, column: int):
         if column != 1:
             return
         item = self.category_table.item(row, 0)
-        if item is None:
-            return
-        category = item.text()
+        if item is not None:
+            self._show_category_drilldown(item.text().strip())
+
+    def _show_category_drilldown(self, category: str):
+        records = self._records_for_category(category)
+        explanations: dict = {}
+        category_highlight_terms = set()
+        for index, record in enumerate(records, start=1):
+            rec_id = record.get("id") if record.get("id") is not None else index
+            res = classify_record(record.get("title"), record.get("complaint_text"))
+            hits = res.matched_terms.get(category, [])
+            if hits:
+                explanations[rec_id] = f"'{category}' kuralında eşleşen anahtar kelimeler: {', '.join(hits)}"
+                category_highlight_terms.update(hits)
+            elif category == "Diğer":
+                explanations[rec_id] = "Tanımlı kurallarla eşleşen anahtar kelime bulunmadığı için 'Diğer' kategorisine atandı."
+            else:
+                explanations[rec_id] = f"'{category}' kategorisine kurallar veya metin içeriği doğrultusunda dahil edildi."
+
         self._open_records_dialog(
             f"Kategori: {category}",
-            self._records_for_category(category),
+            records,
+            highlight_terms=list(category_highlight_terms),
+            explanations=explanations,
         )
 
     # ------------------------------------------------------------------
@@ -175,6 +215,65 @@ class AdvancedMainWindow(EnhancedMainWindow):
         self._verb_cache = suffix_verb_stats(documents, suffixes=suffixes, top_k=200)
         if hasattr(self, "verb_table"):
             self._render_verb_analysis()
+
+    def _setup_verb_drilldown(self):
+        self.verb_table.cellDoubleClicked.connect(self._open_verb_matches)
+        self.verb_table.setToolTip("Bir fiile çift tıklayarak içeren şikâyetleri açın.")
+
+    def _open_verb_matches(self, row: int, _column: int = 0):
+        stem_item = self.verb_table.item(row, 0)
+        examples_item = self.verb_table.item(row, 1)
+        if not stem_item:
+            return
+        stem = stem_item.text().strip()
+        examples_text = examples_item.text().strip() if examples_item else ""
+        examples = [e.strip() for e in examples_text.split(",") if e.strip()]
+        search_terms = list(set([stem] + examples))
+
+        matches = []
+        for record in getattr(self, "_analysis_records", []):
+            text = f"{record.get('title') or ''} {record.get('complaint_text') or ''}".lower()
+            if any(term.lower() in text for term in search_terms):
+                matches.append(record)
+
+        self._open_records_dialog(
+            f"Fiil Analizi: {stem} ({examples_text})",
+            matches,
+            highlight_terms=search_terms,
+        )
+
+    def _setup_distinctive_dialog(self):
+        # KAtegori ifadelerinde altta değil, çift tıkla aktif olsun
+        if hasattr(self, "distinctive_result_group"):
+            self.distinctive_result_group.hide()
+        if hasattr(self, "distinctive_splitter"):
+            self.distinctive_splitter.setSizes([1000, 0])
+        try:
+            self.distinctive_table.cellClicked.disconnect(self._show_distinctive_matches)
+        except (RuntimeError, TypeError):
+            pass
+        self.distinctive_table.cellDoubleClicked.connect(self._open_distinctive_dialog_matches)
+        self.distinctive_table.setToolTip("Bir ifadeye çift tıklayarak içeren şikâyetleri açın.")
+
+    def _open_distinctive_dialog_matches(self, row: int, _column: int = 0):
+        item = self.distinctive_table.item(row, 0)
+        if item is None:
+            return
+        term = item.text().strip()
+        records_pool = (
+            self._records_for_distinctive_category()
+            if hasattr(self, "_records_for_distinctive_category")
+            else getattr(self, "_analysis_records", [])
+        )
+        matches = [
+            record for record in records_pool
+            if self._record_contains_term(record, term)
+        ]
+        self._open_records_dialog(
+            f"Ayırt Edici İfade: {term}",
+            matches,
+            highlight_terms=[term],
+        )
 
     # ------------------------------------------------------------------
     # Detailed NLP statistics

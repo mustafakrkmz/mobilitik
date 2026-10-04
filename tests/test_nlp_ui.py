@@ -73,7 +73,7 @@ def _make_window(monkeypatch, tmp_path):
 def test_nlp_tab_renders_cached_sentiment_and_priorities(monkeypatch, tmp_path):
     app, window = _make_window(monkeypatch, tmp_path)
     try:
-        assert window.tabs.count() == 7
+        assert window.tabs.count() == 8
         assert window.tabs.tabText(window.tabs.count() - 1) == "NLP / Duygu Analizi"
         assert window.nlp_total_card[1].text() == "2"
         assert window.nlp_negative_card[1].text() == "%50.0"

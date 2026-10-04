@@ -68,6 +68,11 @@ echo [2/4] Python paketleri kuruluyor...
 if errorlevel 1 goto :error
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 goto :error
+if /I "%1"=="--dev" (
+    echo Gelistirici paketleri (requirements-dev.txt) kuruluyor...
+    ".venv\Scripts\python.exe" -m pip install -r requirements-dev.txt
+    if errorlevel 1 goto :error
+)
 
 echo [3/4] Chromium kuruluyor...
 ".venv\Scripts\python.exe" -m playwright install chromium

@@ -8,4 +8,6 @@ venv/
 mobilitik_categories.json
 exports/*.csv
 exports/*.xlsx
+*.xlsx
+.pytest_cache/
 .playwright/

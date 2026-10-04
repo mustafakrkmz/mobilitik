@@ -26,10 +26,31 @@ def normalize_text(text: str) -> str:
 
 
 _RAW_STOPWORDS = {
+    # Bağlaçlar ve edatlar
     "ve", "veya", "ile", "bir", "bu", "şu", "o", "de", "da", "ki", "için", "ama", "ancak",
-    "çok", "daha", "en", "gibi", "kadar", "sonra", "önce", "olan", "olarak", "ise", "ben", "biz",
-    "siz", "onlar", "bana", "bizi", "beni", "bunun", "bunu", "şirket", "firma", "ürün", "aldım",
-    "aldık", "ettim", "edildi", "ediyor", "oldu", "oluyor", "var", "yok", "hala", "artık",
+    "çok", "daha", "en", "gibi", "kadar", "sonra", "önce", "olan", "olarak", "ise", "diye",
+    "çünkü", "fakat", "lakin", "halbuki", "oysa", "ayrıca", "hem", "ya", "yahut", "eğer",
+    "şayet", "madem", "böylece", "dolayısıyla", "dolayı", "nedeniyle", "sebebiyle", "üzere", "göre",
+    "karşı", "doğru", "itibaren", "beri", "boyunca", "esnasında", "sırasında", "birlikte", "beraber",
+    "tarafından", "şekilde", "hakkında", "rağmen",
+
+    # Zamirler ve işaret sözcükleri
+    "ben", "biz", "siz", "onlar", "bana", "bizi", "beni", "bize", "size", "onlara",
+    "benden", "bizden", "sizden", "onlardan", "benim", "bizim", "sizin", "onların",
+    "bunun", "bunu", "buna", "bunda", "bundan", "şunun", "şunu", "şuna", "şunda", "şundan",
+    "onun", "onu", "ona", "onda", "ondan", "bunlar", "şunlar", "burada", "şurada", "orada",
+    "buraya", "şuraya", "oraya", "buradan", "oradan", "kendi", "kendisi", "kendim", "kendimiz",
+
+    # Belirteçler ve sıklık sözcükleri
+    "her", "tüm", "bütün", "bazı", "birkaç", "hiç", "hiçbir", "bile", "dahi", "yalnız", "sadece",
+    "tekrar", "yine", "gene", "zaten", "artık", "hala", "hâlâ", "öyle", "şöyle", "böyle",
+    "aynen", "tabi", "tabii", "acaba", "belki", "nasıl", "neden", "niçin", "niye", "hangi",
+
+    # Şikayet bağlamında yaygın gürültü / yardımcı eylemler
+    "şirket", "firma", "ürün", "aldım", "aldık", "ettim", "edildi", "ediyor", "eden", "ettiği",
+    "etmek", "oldu", "oluyor", "olan", "olması", "olduğu", "olmak", "var", "yok", "yaptım",
+    "yaptık", "yapıldı", "yapıyor", "yapan", "yaptığı", "yapmak", "dedim", "dedi", "demek",
+    "verdi", "verdim", "verilen", "aldığı", "gelen", "giden",
 }
 STOPWORDS = {normalize_text(word) for word in _RAW_STOPWORDS}
 

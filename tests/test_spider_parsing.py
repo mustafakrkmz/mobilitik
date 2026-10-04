@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from scrapy import Request
 from scrapy.http import HtmlResponse
@@ -217,3 +218,155 @@ def test_timing_is_left_empty_when_status_has_no_explicit_date():
     assert item["company_responded"] is True
     assert item["response_hours"] is None
     assert item["resolution_hours"] is None
+
+
+def test_listing_early_stopping_when_all_cards_older_than_start_date():
+    spider = ComplaintSpider(
+        company="istikbal", start_date="2026-10-01", max_pages=5
+    )
+    html = """
+    <html><body>
+      <article class="relative ga-c ga-v">
+        <a href="/istikbal/eski-sikayet-1">Eski şikâyet 1</a>
+        <span>20 Eylül 16:55</span>
+      </article>
+      <article class="relative ga-c ga-v">
+        <a href="/istikbal/eski-sikayet-2">Eski şikâyet 2</a>
+        <span>15 Eylül 12:00</span>
+      </article>
+    </body></html>
+    """
+    response = _response(
+        "https://www.sikayetvar.com/istikbal?page=1", html, {"page_num": 1}
+    )
+    requests = list(spider.parse_listing(response))
+    assert len(requests) == 0
+
+
+def test_structured_discussion_forum_posting_extracts_full_text():
+    spider = ComplaintSpider(company="istikbal")
+    ld_data = {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "mainEntity": {
+            "@type": "DiscussionForumPosting",
+            "headline": "Koltuk Takımı Kusurlu Geldi",
+            "dateCreated": "2026-10-04T14:30:00+03:00",
+            "text": "Birinci paragraf: Koltuk takımını 3 ay önce sipariş ettik ancak kumaşı yırtık teslim edildi.\n\nİkinci paragraf: Müşteri hizmetlerini defalarca aramamıza rağmen servis yönlendirilmedi ve mağdur edildik.",
+            "comment": [
+                {
+                    "@type": "Comment",
+                    "text": "Değerli Müşterimiz, Talebiniz kayıt altına alınmış olup inceleme başlatılmıştır.",
+                    "datePublished": "2026-10-04T15:00:00+03:00",
+                    "author": {
+                        "@type": "Organization",
+                        "name": "İstikbal Müşteri Hizmetleri",
+                    },
+                }
+            ],
+        },
+    }
+    html = f"""
+    <html><body>
+      <script type="application/ld+json">{json.dumps(ld_data, ensure_ascii=False)}</script>
+    </body></html>
+    """
+    response = _response(
+        "https://www.sikayetvar.com/istikbal/koltuk-kusurlu",
+        html,
+        {
+            "ref_url": "https://www.sikayetvar.com/istikbal/koltuk-kusurlu",
+            "listing_page": 1,
+            "listing_resolved": False,
+        },
+    )
+    items = list(spider.parse_complaint(response))
+    assert len(items) == 1
+    item = items[0]
+    assert item["title"] == "Koltuk Takımı Kusurlu Geldi"
+    assert item["complaint_date"] == "2026-10-04 14:30:00"
+    assert "Birinci paragraf" in item["complaint_text"]
+    assert "İkinci paragraf" in item["complaint_text"]
+    assert item["company_responded"] is True
+    assert "Talebiniz kayıt altına alınmış" in item["company_response_text"]
+    assert item["company_response_date"] == "2026-10-04 15:00:00"
+    assert item["response_hours"] == 0.5
+
+
+def test_all_article_paragraphs_preserves_multiple_paragraphs():
+    spider = ComplaintSpider(company="istikbal")
+    html = """
+    <html><body>
+      <article>
+        <h1>Geciken Teslimat ve İlgisizlik</h1>
+        <div class="mt-4 md:mt-5 font-normal">
+          <p>İlk paragraf: Mağazadan aldığımız yemek odası takımı belirtilen tarihten 2 ay sonra geldi.</p>
+          <p>İkinci paragraf: Gelen ürünlerin sandalyeleri eksikti ve masa tablasında derin çizikler mevcuttu.</p>
+          <p>Üçüncü paragraf: Durumu derhal bildirmemize rağmen herhangi bir aksiyon alınmadı ve mağduriyetimiz giderilmedi.</p>
+        </div>
+      </article>
+    </body></html>
+    """
+    response = _response(
+        "https://www.sikayetvar.com/istikbal/geciken-teslimat",
+        html,
+        {
+            "ref_url": "https://www.sikayetvar.com/istikbal/geciken-teslimat",
+            "listing_page": 1,
+            "listing_resolved": False,
+            "listing_title": "Geciken Teslimat ve İlgisizlik",
+            "listing_date": "2026-10-04 12:00:00",
+        },
+    )
+    items = list(spider.parse_complaint(response))
+    assert len(items) == 1
+    text = items[0]["complaint_text"]
+    assert "İlk paragraf" in text
+    assert "İkinci paragraf" in text
+    assert "Üçüncü paragraf" in text
+
+
+def test_parse_listing_captures_tailwind_and_video_cards():
+    spider = ComplaintSpider(company="istikbal", max_pages=1)
+    html = """
+    <html><body>
+      <!-- Modern standard card with h3 a -->
+      <article class="group relative isolate w-full py-6 md:py-8 border-b">
+        <h3>
+          <a href="/istikbal/standart-sikayet" title="Standart Şikâyet Başlığı">
+            Standart Şikâyet Başlığı
+          </a>
+        </h3>
+        <span class="text-zinc-500">4 Ekim 10:00</span>
+        <p>Standart şikâyet açıklama metni burada.</p>
+      </article>
+
+      <!-- Video complaint card with a[title] -->
+      <article class="group relative isolate w-full py-6 md:py-8 border-b">
+        <a href="/istikbal/video-sikayet" title="Videolu Şikâyet Başlığı" class="font-semibold">
+          Videolu Şikâyet Başlığı
+        </a>
+        <span class="text-zinc-500">4 Ekim 09:30</span>
+        <p>Videolu şikâyet açıklama metni burada.</p>
+      </article>
+
+      <!-- Category tag link that should not be parsed as a complaint -->
+      <article class="group relative isolate w-full py-6 md:py-8 border-b">
+        <a href="/istikbal/koltuk-takimlari"># Koltuk Takımları</a>
+      </article>
+    </body></html>
+    """
+    response = _response(
+        "https://www.sikayetvar.com/istikbal?page=1",
+        html,
+        {"page_num": 1},
+    )
+    requests = list(spider.parse_listing(response))
+    assert len(requests) == 2
+    urls = [r.url for r in requests]
+    assert "https://www.sikayetvar.com/istikbal/standart-sikayet" in urls
+    assert "https://www.sikayetvar.com/istikbal/video-sikayet" in urls
+    titles = [r.meta["listing_title"] for r in requests]
+    assert "Standart Şikâyet Başlığı" in titles
+    assert "Videolu Şikâyet Başlığı" in titles
+

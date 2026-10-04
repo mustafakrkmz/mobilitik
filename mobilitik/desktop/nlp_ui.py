@@ -38,15 +38,16 @@ from mobilitik.desktop.app import APP_TITLE, MainWindow
 class NlpMainWindow(MainWindow):
     """Main Mobilitik window with an opt-in NLP analysis workspace."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, defer_initial_refresh: bool = False):
+        super().__init__(defer_initial_refresh=defer_initial_refresh)
         self.nlp_store = SentimentStore(self.repo.db_path)
         self.nlp_process: QProcess | None = None
         self.nlp_install_process: QProcess | None = None
         self._nlp_output_buffer = ""
         self._nlp_install_buffer = ""
         self._build_nlp_tab()
-        self.refresh_nlp_cached_view()
+        if not defer_initial_refresh:
+            self.refresh_nlp_cached_view()
 
     def _build_nlp_tab(self):
         self.nlp_tab = QWidget()
@@ -117,6 +118,9 @@ class NlpMainWindow(MainWindow):
             ["Tarih", "Başlık", "Duygu", "Güven", "Negatif %", "Nötr %", "Pozitif %"]
         )
         self.nlp_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.nlp_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.nlp_table.cellDoubleClicked.connect(self._open_sentiment_explanation)
+        self.nlp_table.setToolTip("Bir şikâyete çift tıklayarak duygu atamasının nedenini ve cümle analizini açın.")
         self.nlp_table.setAlternatingRowColors(True)
         header = self.nlp_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -369,6 +373,7 @@ class NlpMainWindow(MainWindow):
         self.nlp_positive_card[1].setText(self._pct(int(counts["positive"]), total))
         self.nlp_intensity_card[1].setText(f"%{float(counts['mean_negative']) * 100:.1f}" if total else "—")
 
+        self._nlp_rows = rows
         self.nlp_table.setRowCount(len(rows))
         for r, row in enumerate(rows):
             tooltip = (row["complaint_text"] or "")[:3000]
@@ -430,6 +435,38 @@ class NlpMainWindow(MainWindow):
             )
         else:
             self.nlp_status.setText("Bu firma/dönem için henüz NLP sonucu yok. Model otomatik çalıştırılmadı.")
+
+    def _open_sentiment_explanation(self, row: int, _column: int = 0):
+        rows = getattr(self, "_nlp_rows", [])
+        if 0 <= row < len(rows):
+            nlp_row = rows[row]
+            from mobilitik.desktop.drilldown import SentimentExplanationDialog
+            dialog = SentimentExplanationDialog(
+                record=dict(nlp_row),
+                sentiment_score={
+                    "label": sentiment_label_tr(nlp_row["label"]),
+                    "confidence": float(nlp_row["confidence"] or 0.0),
+                    "negative": float(nlp_row["negative"] or 0.0),
+                    "neutral": float(nlp_row["neutral"] or 0.0),
+                    "positive": float(nlp_row["positive"] or 0.0),
+                },
+                parent=self,
+            )
+            dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+            if not hasattr(self, "_open_explanation_dialogs"):
+                self._open_explanation_dialogs = []
+            self._open_explanation_dialogs.append(dialog)
+
+            def cleanup(*_args):
+                if dialog in getattr(self, "_open_explanation_dialogs", []):
+                    self._open_explanation_dialogs.remove(dialog)
+
+            dialog.destroyed.connect(cleanup)
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+            return dialog
+        return None
 
 
 def main():

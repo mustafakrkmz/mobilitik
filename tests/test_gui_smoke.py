@@ -79,7 +79,8 @@ def test_main_window_runs_analysis_headlessly(monkeypatch, tmp_path):
         window.refresh_analysis()
         app.processEvents()
 
-        assert window.tabs.count() == 6
+        assert window.tabs.count() == 7
+        assert "Veritabanı Yönetimi" in [window.tabs.tabText(i) for i in range(window.tabs.count())]
         assert window.total_card[1].text() == "2"
         assert window.resolved_card[1].text() == "%50.0"
         assert window.response_card[1].text() == "%100.0"
@@ -216,6 +217,24 @@ def test_main_window_builds_and_starts_scraper_process(monkeypatch, tmp_path):
 
         window.stop_scraping()
         assert window.process.terminated is True
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_complaints_text_search_filters_table(monkeypatch, tmp_path):
+    app, window = _make_window(monkeypatch, tmp_path)
+    try:
+        assert window.table.rowCount() == 2
+        window.complaint_search_input.setText("kumaş")
+        assert window.table.rowCount() == 1
+        assert window.table.item(0, 2).text() == "Koltuk kumaşı deforme oldu"
+
+        window.complaint_search_input.setText("bulunamayan metin")
+        assert window.table.rowCount() == 0
+
+        window.complaint_search_input.clear()
+        assert window.table.rowCount() == 2
     finally:
         window.close()
         app.processEvents()

@@ -4,13 +4,18 @@ import sqlite3
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QDate
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel, QTextEdit
 
 import mobilitik.desktop.app as app_module
 import mobilitik.desktop.advanced_ui as advanced_ui
 from mobilitik.analysis.nlp_store import SentimentStore
 from mobilitik.analysis.sentiment import ANALYZER_VERSION, DEFAULT_MODEL_ID
 from mobilitik.desktop.data import ComplaintRepository
+from mobilitik.desktop.drilldown import (
+    ComplaintDetailDialog,
+    ComplaintDrilldownDialog,
+    SentimentExplanationDialog,
+)
 
 
 def _seed(db_path):
@@ -147,3 +152,141 @@ def test_detailed_nlp_statistics_render_from_cache(monkeypatch, tmp_path):
     finally:
         window.close()
         app.processEvents()
+
+
+def test_complaint_double_click_opens_detail_dialog(monkeypatch, tmp_path):
+    app, window, _db = _make_window(monkeypatch, tmp_path)
+    try:
+        # Find row corresponding to 'Teslimat gecikti'
+        target_row = None
+        for r in range(window.table.rowCount()):
+            if "Teslimat gecikti" in window.table.item(r, 2).text():
+                target_row = r
+                break
+        assert target_row is not None
+        dialog = window._open_complaint_detail(target_row, 2)
+        assert dialog is not None
+        assert isinstance(dialog, ComplaintDetailDialog)
+        assert "Teslimat gecikti" in dialog.windowTitle()
+        text_edits = dialog.findChildren(QTextEdit)
+        assert any("Teslimat yapıldı" in te.toPlainText() for te in text_edits)
+        dialog.close()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_category_double_click_shows_explanations_and_highlighting(monkeypatch, tmp_path):
+    app, window, _db = _make_window(monkeypatch, tmp_path)
+    try:
+        category_row = None
+        for row in range(window.category_table.rowCount()):
+            if window.category_table.item(row, 0).text() == "Teslimat / Lojistik":
+                category_row = row
+                break
+        assert category_row is not None
+        window._open_category_matches_double(category_row, 0)
+        dialog = window._open_drilldown_dialogs[-1]
+        assert dialog is not None
+        assert "Kategori: Teslimat / Lojistik" in dialog.windowTitle()
+        assert len(dialog.records) >= 1
+        assert any("kuralında eşleşen anahtar kelimeler" in str(exp) for exp in dialog.explanations.values())
+        assert dialog.highlight_terms
+        assert any("teslimat" in str(term).lower() for term in dialog.highlight_terms)
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_word_double_click_highlights_term_bold_red(monkeypatch, tmp_path):
+    app, window, _db = _make_window(monkeypatch, tmp_path)
+    try:
+        term_row = None
+        for row in range(window.word_table.rowCount()):
+            if window.word_table.item(row, 0).text() == "teslimat":
+                term_row = row
+                break
+        assert term_row is not None
+        window._open_word_matches(term_row, 0)
+        dialog = window._open_drilldown_dialogs[-1]
+        assert dialog is not None
+        assert dialog.highlight_terms == ["teslimat"]
+        labels = [lbl.text() for lbl in dialog.findChildren(QLabel)]
+        highlighted = [l for l in labels if "#ef4444" in l and ("<b>" in l.lower() or "font-weight: bold" in l)]
+        assert highlighted
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_verb_double_click_drills_down_and_highlights(monkeypatch, tmp_path):
+    app, window, _db = _make_window(monkeypatch, tmp_path)
+    try:
+        window.verb_suffix_input.setText("ıyor; iyor; uyor; üyor; ıldı; ildi")
+        window.refresh_verb_analysis()
+        verb_row = None
+        for row in range(window.verb_table.rowCount()):
+            if window.verb_table.item(row, 0).text() == "yap":
+                verb_row = row
+                break
+        assert verb_row is not None
+        window._open_verb_matches(verb_row, 0)
+        dialog = window._open_drilldown_dialogs[-1]
+        assert dialog is not None
+        assert "Fiil Analizi: yap" in dialog.windowTitle()
+        assert len(dialog.records) >= 1
+        assert "yap" in dialog.highlight_terms
+        labels = [lbl.text() for lbl in dialog.findChildren(QLabel)]
+        highlighted = [l for l in labels if "#ef4444" in l]
+        assert highlighted
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_distinctive_terms_tab_no_bottom_panel_and_double_click_drills_down(monkeypatch, tmp_path):
+    app, window, _db = _make_window(monkeypatch, tmp_path)
+    try:
+        assert hasattr(window, "distinctive_result_group")
+        assert not window.distinctive_result_group.isVisible()
+
+        window.distinctive_category_combo.setCurrentText("Tümü")
+        window.refresh_distinctive_analysis()
+        if window.distinctive_table.rowCount() > 0:
+            term = window.distinctive_table.item(0, 0).text().strip()
+            window._open_distinctive_dialog_matches(0, 0)
+            dialog = window._open_drilldown_dialogs[-1]
+            assert dialog is not None
+            assert f"Ayırt Edici İfade: {term}" in dialog.windowTitle()
+            assert dialog.highlight_terms == [term]
+            labels = [lbl.text() for lbl in dialog.findChildren(QLabel)]
+            highlighted = [l for l in labels if "#ef4444" in l]
+            assert highlighted
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_nlp_table_double_click_opens_sentiment_explanation(monkeypatch, tmp_path):
+    app, window, db_path = _make_window(monkeypatch, tmp_path)
+    try:
+        store = SentimentStore(db_path)
+        store.upsert_sentiment(
+            1, DEFAULT_MODEL_ID, ANALYZER_VERSION, "h1",
+            label="negative", confidence=0.95, negative=0.92, neutral=0.05, positive=0.03,
+        )
+        window.refresh_nlp_cached_view()
+        app.processEvents()
+
+        assert window.nlp_table.rowCount() >= 1
+        dialog = window._open_sentiment_explanation(0, 0)
+        assert dialog is not None
+        assert isinstance(dialog, SentimentExplanationDialog)
+        assert "Duygu Analizi Açıklaması" in dialog.windowTitle()
+        labels = [lbl.text() for lbl in dialog.findChildren(QLabel)]
+        assert any("%95.0" in l for l in labels)
+        dialog.close()
+    finally:
+        window.close()
+        app.processEvents()
+
